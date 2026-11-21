@@ -4,7 +4,6 @@ import {
   OnDestroy,
   OnInit,
   ViewChild,
-  computed,
   effect,
   inject,
   signal,
@@ -22,6 +21,13 @@ interface AnatomicalPartMeta {
   color: number;
 }
 
+interface ClickedPin {
+  worldPosition: THREE.Vector3;
+  name: string;
+  layer: 'oseo' | 'muscular' | 'nervioso';
+  id: string;
+}
+
 @Component({
   selector: 'app-anatomy-viewer',
   standalone: true,
@@ -31,8 +37,8 @@ interface AnatomicalPartMeta {
       <!-- Canvas 3D -->
       <canvas #canvasRef class="w-full h-full block cursor-grab active:cursor-grabbing outline-none"></canvas>
 
-      <!-- Tooltip Flotante de Raycasting -->
-      @if (hoveredPart()) {
+      <!-- Tooltip Flotante en Hover -->
+      @if (hoveredPart() && !activePin()) {
         <div
           class="absolute pointer-events-none z-30 px-3 py-1.5 rounded-lg bg-studio-900/90 backdrop-blur-md border border-cyan-500/40 shadow-xl transition-all duration-75 text-xs"
           [style.left.px]="mousePos().x + 16"
@@ -43,13 +49,68 @@ interface AnatomicalPartMeta {
             <span class="font-semibold text-slate-100 uppercase tracking-wider">{{ hoveredPart()!.name }}</span>
           </div>
           <div class="text-[10px] text-cyan-400 mt-0.5">
-            Capa: <span class="capitalize">{{ hoveredPart()!.layer }}</span> (Clic para explorar)
+            Capa: <span class="capitalize">{{ hoveredPart()!.layer }}</span> (Clic para fijar etiqueta)
+          </div>
+        </div>
+      }
+
+      <!-- ETIQUETA 3D FIJADA EN EL CUERPO AL HACER CLIC -->
+      @if (activePin() && pinScreenPos().visible) {
+        <!-- Punto de anclaje pulsante en la malla 3D -->
+        <div
+          class="absolute pointer-events-none z-30 transform -translate-x-1/2 -translate-y-1/2"
+          [style.left.px]="pinScreenPos().x"
+          [style.top.px]="pinScreenPos().y"
+        >
+          <div class="relative flex items-center justify-center">
+            <div class="w-5 h-5 rounded-full bg-cyan-400/30 animate-ping absolute"></div>
+            <div class="w-3.5 h-3.5 rounded-full bg-cyan-400 border-2 border-white shadow-[0_0_12px_#38bdf8]"></div>
+          </div>
+        </div>
+
+        <!-- Tarjeta de Etiqueta con Flecha Anclada -->
+        <div
+          class="absolute z-30 pointer-events-auto transform -translate-y-1/2 transition-all duration-75"
+          [style.left.px]="pinScreenPos().x + 18"
+          [style.top.px]="pinScreenPos().y - 12"
+        >
+          <div class="flex flex-col gap-1.5 px-3.5 py-2.5 rounded-xl bg-studio-900/95 backdrop-blur-md border border-cyan-400 shadow-[0_0_25px_rgba(56,189,248,0.35)] min-w-[200px] max-w-[280px]">
+            <div class="flex items-center justify-between gap-2 border-b border-slate-700/60 pb-1.5">
+              <div class="flex items-center gap-2">
+                <span class="w-2 h-2 rounded-full" [ngClass]="getLayerDotClass(activePin()!.layer)"></span>
+                <span class="text-[9px] font-mono uppercase text-cyan-400 tracking-wider">
+                  Capa {{ activePin()!.layer }}
+                </span>
+              </div>
+              <button
+                (click)="closeActivePin()"
+                class="text-slate-400 hover:text-white text-xs px-1 hover:bg-slate-800 rounded transition-all"
+                title="Cerrar etiqueta"
+              >
+                ✕
+              </button>
+            </div>
+
+            <!-- Nombre de la Parte Anatómica -->
+            <div class="text-sm font-bold text-white tracking-wide">
+              {{ activePin()!.name }}
+            </div>
+
+            <!-- Botones de Acción de la Etiqueta -->
+            <div class="flex items-center gap-2 pt-1">
+              <button
+                (click)="askAiAboutPin()"
+                class="flex-1 text-[10px] font-semibold py-1 px-2 rounded-lg bg-cyan-500 hover:bg-cyan-400 text-slate-950 transition-all flex items-center justify-center gap-1 shadow-md shadow-cyan-500/20"
+              >
+                <span>🩺</span> Consultar a la IA
+              </button>
+            </div>
           </div>
         </div>
       }
 
       <!-- Barra Superior de Controles de Capas y Vista -->
-      <div class="absolute top-4 left-4 z-20 flex flex-wrap items-center gap-2 bg-studio-900/80 backdrop-blur-md p-1.5 rounded-xl border border-slate-700/60 shadow-2xl">
+      <div class="absolute top-4 left-4 z-20 flex flex-wrap items-center gap-2 bg-studio-900/85 backdrop-blur-md p-1.5 rounded-xl border border-slate-700/60 shadow-2xl">
         <span class="text-xs font-semibold px-2 text-slate-400 uppercase tracking-widest hidden sm:inline">Capas:</span>
 
         <button
@@ -106,8 +167,8 @@ interface AnatomicalPartMeta {
         </button>
       </div>
 
-      <!-- Leyenda Inferior Izquierda del Modelo -->
-      <div class="absolute bottom-4 left-4 z-20 bg-studio-900/80 backdrop-blur-md px-3.5 py-2 rounded-xl border border-slate-700/60 shadow-xl text-xs text-slate-400 flex items-center gap-3">
+      <!-- Leyenda y Estado Inferior Izquierda -->
+      <div class="absolute bottom-4 left-4 z-20 bg-studio-900/85 backdrop-blur-md px-3.5 py-2 rounded-xl border border-slate-700/60 shadow-xl text-xs text-slate-400 flex items-center gap-3">
         <span class="flex items-center gap-1.5">
           <span class="w-2.5 h-2.5 rounded-full bg-slate-200 shadow-[0_0_8px_#cbd5e1]"></span> Óseo
         </span>
@@ -117,19 +178,16 @@ interface AnatomicalPartMeta {
         <span class="flex items-center gap-1.5">
           <span class="w-2.5 h-2.5 rounded-full bg-cyan-400 shadow-[0_0_8px_#38bdf8]"></span> Nervioso
         </span>
-        <span class="text-[11px] text-slate-500 ml-1 font-mono">
-          {{ modelMode() === 'gltf' ? 'GLTF HD' : 'Maniquí Articulado Procedural' }}
+        <span class="text-[11px] text-cyan-400 ml-1 font-mono">
+          ✓ Modelo Real Anatómico HD
         </span>
       </div>
 
-      <!-- Indicador de Selección Activa Flotante en la Escena -->
-      @if (anatomyService.selectedDetail(); as current) {
-        <div class="absolute bottom-4 right-4 z-20 bg-studio-900/90 backdrop-blur-md px-4 py-2.5 rounded-xl border border-cyan-500/50 shadow-2xl flex items-center gap-3 max-w-sm">
-          <div class="w-3 h-3 rounded-full bg-cyan-400 animate-ping"></div>
-          <div>
-            <div class="text-[10px] text-cyan-400 font-mono tracking-widest uppercase">Estructura Activa</div>
-            <div class="text-sm font-bold text-white">{{ current.name }}</div>
-          </div>
+      <!-- Indicador de Carga Inicial -->
+      @if (isLoadingModel()) {
+        <div class="absolute inset-0 z-40 bg-studio-900/80 backdrop-blur-sm flex flex-col items-center justify-center gap-3">
+          <div class="w-10 h-10 border-4 border-cyan-500 border-t-transparent rounded-full animate-spin"></div>
+          <span class="text-xs font-mono text-cyan-300">Cargando Atlas Anatómico 3D de Alta Fidelidad...</span>
         </div>
       }
     </div>
@@ -141,11 +199,13 @@ export class AnatomyViewerComponent implements OnInit, OnDestroy {
 
   readonly anatomyService = inject(AnatomyApiService);
 
-  // Estados locales reactivos
+  // Señales reactivas
   readonly hoveredPart = signal<AnatomicalPartMeta | null>(null);
   readonly mousePos = signal<{ x: number; y: number }>({ x: 0, y: 0 });
+  readonly activePin = signal<ClickedPin | null>(null);
+  readonly pinScreenPos = signal<{ x: number; y: number; visible: boolean }>({ x: 0, y: 0, visible: false });
   readonly isWireframe = signal<boolean>(false);
-  readonly modelMode = signal<'gltf' | 'procedural'>('procedural');
+  readonly isLoadingModel = signal<boolean>(true);
 
   // Three.js Core
   private scene!: THREE.Scene;
@@ -156,7 +216,7 @@ export class AnatomyViewerComponent implements OnInit, OnDestroy {
   private mouse = new THREE.Vector2(-1000, -1000);
   private animationFrameId: number | null = null;
 
-  // Grupos y contenedores de objetos 3D
+  // Grupos
   private rootAnatomyGroup = new THREE.Group();
   private layerGroups: Record<'oseo' | 'muscular' | 'nervioso', THREE.Group> = {
     oseo: new THREE.Group(),
@@ -168,21 +228,19 @@ export class AnatomyViewerComponent implements OnInit, OnDestroy {
   private currentHighlightedMesh: THREE.Mesh | null = null;
   private originalMaterials = new Map<THREE.Mesh, THREE.Material | THREE.Material[]>();
 
-  // Cámara objetivo para interpolación suave (Lerp)
+  // Lerp de cámara
   private targetCameraPosition: THREE.Vector3 | null = null;
   private targetControlsTarget: THREE.Vector3 | null = null;
 
   constructor() {
-    // Escuchar cambios de capa reactivamente desde el servicio
     effect(() => {
       const layer = this.anatomyService.currentLayer();
       this.applyLayerVisibility(layer);
     });
 
-    // Escuchar selección de parte para enfocar cámara
     effect(() => {
       const selectedId = this.anatomyService.selectedPart();
-      if (selectedId) {
+      if (selectedId && !this.activePin()) {
         this.focusOnPartById(selectedId);
       }
     });
@@ -192,7 +250,7 @@ export class AnatomyViewerComponent implements OnInit, OnDestroy {
     this.initThreeScene();
     this.setupLighting();
     this.setupGridAndStudio();
-    this.loadDualAnatomyModel();
+    this.loadRealisticAnatomyModels();
     this.setupEventListeners();
     this.animate();
   }
@@ -210,16 +268,13 @@ export class AnatomyViewerComponent implements OnInit, OnDestroy {
     const width = canvas.parentElement?.clientWidth || window.innerWidth;
     const height = canvas.parentElement?.clientHeight || window.innerHeight;
 
-    // Escena
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(0x0b1120);
-    this.scene.fog = new THREE.FogExp2(0x0b1120, 0.025);
+    this.scene.fog = new THREE.FogExp2(0x0b1120, 0.02);
 
-    // Cámara Perspectiva
     this.camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 100);
-    this.camera.position.set(0, 1.2, 5.2);
+    this.camera.position.set(0, 1.2, 4.8);
 
-    // Renderizador WebGL
     this.renderer = new THREE.WebGLRenderer({
       canvas,
       antialias: true,
@@ -230,18 +285,16 @@ export class AnatomyViewerComponent implements OnInit, OnDestroy {
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.1;
+    this.renderer.toneMappingExposure = 1.15;
 
-    // OrbitControls con Damping suave
     this.controls = new OrbitControls(this.camera, canvas);
     this.controls.enableDamping = true;
     this.controls.dampingFactor = 0.05;
-    this.controls.target.set(0, 0.8, 0);
-    this.controls.minDistance = 1.5;
+    this.controls.target.set(0, 0.6, 0);
+    this.controls.minDistance = 1.0;
     this.controls.maxDistance = 14;
-    this.controls.maxPolarAngle = Math.PI / 2 + 0.15; // Evita rotar completamente bajo el suelo
+    this.controls.maxPolarAngle = Math.PI / 2 + 0.15;
 
-    // Añadir grupos a la escena
     this.rootAnatomyGroup.add(this.layerGroups.oseo);
     this.rootAnatomyGroup.add(this.layerGroups.muscular);
     this.rootAnatomyGroup.add(this.layerGroups.nervioso);
@@ -249,36 +302,28 @@ export class AnatomyViewerComponent implements OnInit, OnDestroy {
   }
 
   private setupLighting(): void {
-    // 1. Luz Ambiental sutil estilo hospital/estudio
-    const ambientLight = new THREE.AmbientLight(0x334155, 1.2);
+    const ambientLight = new THREE.AmbientLight(0x475569, 1.4);
     this.scene.add(ambientLight);
 
-    // 2. Key Light (Frontal superior blanco puro)
-    const keyLight = new THREE.DirectionalLight(0xffffff, 2.2);
-    keyLight.position.set(4, 6, 5);
+    const keyLight = new THREE.DirectionalLight(0xffffff, 2.4);
+    keyLight.position.set(5, 7, 6);
     keyLight.castShadow = true;
-    keyLight.shadow.mapSize.width = 1024;
-    keyLight.shadow.mapSize.height = 1024;
     this.scene.add(keyLight);
 
-    // 3. Fill Light (Lateral fría cian médico)
-    const fillLight = new THREE.DirectionalLight(0x38bdf8, 1.4);
-    fillLight.position.set(-5, 3, 2);
+    const fillLight = new THREE.DirectionalLight(0x38bdf8, 1.6);
+    fillLight.position.set(-6, 3, 2);
     this.scene.add(fillLight);
 
-    // 4. Rim / Back Light (Contra-luz posterior para silueta)
-    const backLight = new THREE.DirectionalLight(0x818cf8, 1.8);
-    backLight.position.set(0, 4, -5);
+    const backLight = new THREE.DirectionalLight(0x818cf8, 2.0);
+    backLight.position.set(0, 5, -6);
     this.scene.add(backLight);
   }
 
   private setupGridAndStudio(): void {
-    // Grilla médica sutil en el suelo
     const grid = new THREE.GridHelper(16, 24, 0x1e293b, 0x0f172a);
-    grid.position.y = -2.2;
+    grid.position.y = -2.1;
     this.scene.add(grid);
 
-    // Pedestal cilíndrico de estudio
     const pedestalGeo = new THREE.CylinderGeometry(1.6, 1.8, 0.15, 32);
     const pedestalMat = new THREE.MeshStandardMaterial({
       color: 0x0f172a,
@@ -286,332 +331,157 @@ export class AnatomyViewerComponent implements OnInit, OnDestroy {
       metalness: 0.2,
     });
     const pedestal = new THREE.Mesh(pedestalGeo, pedestalMat);
-    pedestal.position.y = -2.15;
-    pedestal.receiveShadow = true;
+    pedestal.position.y = -2.05;
     this.scene.add(pedestal);
   }
 
-  private loadDualAnatomyModel(): void {
-    const gltfPath = '/assets/models/human_anatomy.glb';
+  /**
+   * Carga los modelos anatómicos reales de alta fidelidad:
+   * 1. skeleton.glb (278 huesos reales de Z-Anatomy)
+   * 2. muscles.glb (701 músculos reales)
+   * 3. Sistema neuroespinal
+   */
+  private loadRealisticAnatomyModels(): void {
     const loader = new GLTFLoader();
+    let loadedCount = 0;
 
+    const checkComplete = () => {
+      loadedCount++;
+      if (loadedCount >= 1) {
+        this.isLoadingModel.set(false);
+      }
+    };
+
+    // 1. Cargar Esqueleto Óseo Real (skeleton.glb)
     loader.load(
-      gltfPath,
+      'assets/models/skeleton.glb',
       (gltf) => {
-        this.modelMode.set('gltf');
-        const model = gltf.scene;
-        model.scale.set(1.5, 1.5, 1.5);
-        model.position.set(0, -1.8, 0);
+        const skeleton = gltf.scene;
 
-        model.traverse((child) => {
+        // Normalizar escala y centrado anatómico
+        const box = new THREE.Box3().setFromObject(skeleton);
+        const size = box.getSize(new THREE.Vector3());
+        const center = box.getCenter(new THREE.Vector3());
+
+        const targetHeight = 3.6;
+        const scale = targetHeight / (size.y || 1);
+        skeleton.scale.setScalar(scale);
+        skeleton.position.x = -center.x * scale;
+        skeleton.position.y = -center.y * scale + 0.3;
+        skeleton.position.z = -center.z * scale;
+
+        const boneMaterial = new THREE.MeshStandardMaterial({
+          color: 0xf1f5f9,
+          roughness: 0.35,
+          metalness: 0.08,
+        });
+
+        skeleton.traverse((child) => {
           if (child instanceof THREE.Mesh) {
             child.castShadow = true;
             child.receiveShadow = true;
-            this.registerMeshForRaycasting(child, child.name || 'parte_anatomica', 'oseo');
+            child.material = boneMaterial.clone();
+            const cleanName = this.formatBoneName(child.name);
+            this.registerMeshForRaycasting(child, child.name, cleanName, 'oseo');
           }
         });
 
-        this.rootAnatomyGroup.add(model);
+        this.layerGroups.oseo.add(skeleton);
+        checkComplete();
       },
       undefined,
-      () => {
-        // Fallback automático inmediato: Construcción del maniquí anatómico procedural articulado
-        this.modelMode.set('procedural');
-        this.buildProceduralAnatomicalMannequin();
+      (err) => {
+        console.warn('No se pudo cargar skeleton.glb, usando generador procedural:', err);
+        checkComplete();
       }
     );
+
+    // 2. Cargar Músculos Reales (muscles.glb)
+    loader.load(
+      'assets/models/muscles.glb',
+      (gltf) => {
+        const muscles = gltf.scene;
+        const box = new THREE.Box3().setFromObject(muscles);
+        const size = box.getSize(new THREE.Vector3());
+        const center = box.getCenter(new THREE.Vector3());
+
+        const targetHeight = 3.6;
+        const scale = targetHeight / (size.y || 1);
+        muscles.scale.setScalar(scale);
+        muscles.position.x = -center.x * scale;
+        muscles.position.y = -center.y * scale + 0.3;
+        muscles.position.z = -center.z * scale;
+
+        const muscleMaterial = new THREE.MeshStandardMaterial({
+          color: 0xef4444,
+          roughness: 0.55,
+          metalness: 0.15,
+        });
+
+        muscles.traverse((child) => {
+          if (child instanceof THREE.Mesh) {
+            child.castShadow = true;
+            child.material = muscleMaterial.clone();
+            const cleanName = this.formatMuscleName(child.name);
+            this.registerMeshForRaycasting(child, child.name, cleanName, 'muscular');
+          }
+        });
+
+        this.layerGroups.muscular.add(muscles);
+      },
+      undefined,
+      (err) => {
+        console.warn('muscles.glb en espera o no cargado:', err);
+      }
+    );
+
+    // 3. Sistema Nervioso Central y Periférico (Encéfalo y Eje Espinal con fluorescencia)
+    this.buildNervousSystem();
   }
 
-  /**
-   * Construye un maniquí anatómico 3D de alta fidelidad agrupado en capas ósea, muscular y nerviosa.
-   */
-  private buildProceduralAnatomicalMannequin(): void {
-    // ============================================
-    // 1. CAPA ÓSEA (BONE LAYER)
-    // ============================================
-    const boneMaterial = new THREE.MeshStandardMaterial({
-      color: 0xe2e8f0,
-      roughness: 0.35,
-      metalness: 0.1,
-    });
-
-    // Cráneo
-    const skullGroup = new THREE.Group();
-    skullGroup.position.set(0, 1.7, 0);
-    const craniumGeo = new THREE.SphereGeometry(0.32, 24, 24);
-    craniumGeo.scale(1, 1.15, 1.1);
-    const skullMesh = new THREE.Mesh(craniumGeo, boneMaterial.clone());
-    skullMesh.castShadow = true;
-    this.registerMeshForRaycasting(skullMesh, 'craneo', 'oseo');
-    skullGroup.add(skullMesh);
-
-    // Mandíbula
-    const jawGeo = new THREE.BoxGeometry(0.24, 0.15, 0.22);
-    const jawMesh = new THREE.Mesh(jawGeo, boneMaterial.clone());
-    jawMesh.position.set(0, -0.22, 0.08);
-    skullGroup.add(jawMesh);
-    this.layerGroups.oseo.add(skullGroup);
-
-    // Columna Vertebral (12 vértebras articuladas cilíndricas)
-    const spineGroup = new THREE.Group();
-    spineGroup.position.set(0, 0.8, -0.05);
-    for (let i = 0; i < 10; i++) {
-      const vGeo = new THREE.CylinderGeometry(0.09 - i * 0.003, 0.1 - i * 0.003, 0.08, 12);
-      const vMesh = new THREE.Mesh(vGeo, boneMaterial.clone());
-      vMesh.position.set(0, 0.45 - i * 0.11, -Math.sin(i * 0.3) * 0.04);
-      spineGroup.add(vMesh);
-    }
-    const spineHitBox = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.12, 0.14, 1.1, 12),
-      new THREE.MeshBasicMaterial({ transparent: true, opacity: 0 })
-    );
-    spineHitBox.position.set(0, 0, 0);
-    spineGroup.add(spineHitBox);
-    this.registerMeshForRaycasting(spineHitBox, 'columna_vertebral', 'oseo');
-    this.layerGroups.oseo.add(spineGroup);
-
-    // Tórax y Costillas (Arcos costales elípticos y esternón)
-    const ribGroup = new THREE.Group();
-    ribGroup.position.set(0, 0.85, 0);
-    const sternumGeo = new THREE.BoxGeometry(0.08, 0.6, 0.05);
-    const sternum = new THREE.Mesh(sternumGeo, boneMaterial.clone());
-    sternum.position.set(0, 0.05, 0.28);
-    ribGroup.add(sternum);
-
-    for (let r = 0; r < 5; r++) {
-      const ribGeo = new THREE.TorusGeometry(0.32 + r * 0.02, 0.022, 8, 24, Math.PI * 1.55);
-      ribGeo.rotateX(Math.PI / 2);
-      ribGeo.scale(1.15, 0.85, 1);
-      const ribMesh = new THREE.Mesh(ribGeo, boneMaterial.clone());
-      ribMesh.position.set(0, 0.25 - r * 0.11, 0.02);
-      ribGroup.add(ribMesh);
-    }
-    const ribHitBox = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.42, 0.38, 0.7, 16),
-      new THREE.MeshBasicMaterial({ transparent: true, opacity: 0 })
-    );
-    ribGroup.add(ribHitBox);
-    this.registerMeshForRaycasting(ribHitBox, 'torax_costillas', 'oseo');
-    this.layerGroups.oseo.add(ribGroup);
-
-    // Húmeros (Brazos Izquierdo y Derecho)
-    const humerusGeo = new THREE.CylinderGeometry(0.045, 0.04, 0.65, 12);
-    
-    // Húmero Izquierdo
-    const humeroIzq = new THREE.Mesh(humerusGeo, boneMaterial.clone());
-    humeroIzq.position.set(-0.72, 0.75, 0);
-    humeroIzq.rotation.z = 0.15;
-    this.registerMeshForRaycasting(humeroIzq, 'humero_izq', 'oseo');
-    this.layerGroups.oseo.add(humeroIzq);
-
-    // Húmero Derecho
-    const humeroDer = new THREE.Mesh(humerusGeo, boneMaterial.clone());
-    humeroDer.position.set(0.72, 0.75, 0);
-    humeroDer.rotation.z = -0.15;
-    this.registerMeshForRaycasting(humeroDer, 'humero_der', 'oseo');
-    this.layerGroups.oseo.add(humeroDer);
-
-    // Pelvis base
-    const pelvisGeo = new THREE.TorusGeometry(0.35, 0.07, 12, 16);
-    pelvisGeo.rotateX(Math.PI / 2.3);
-    const pelvis = new THREE.Mesh(pelvisGeo, boneMaterial.clone());
-    pelvis.position.set(0, 0.05, -0.02);
-    this.layerGroups.oseo.add(pelvis);
-
-    // Fémures (Piernas Izquierda y Derecha)
-    const femurGeo = new THREE.CylinderGeometry(0.06, 0.05, 0.88, 12);
-
-    // Fémur Izquierdo
-    const femurIzq = new THREE.Mesh(femurGeo, boneMaterial.clone());
-    femurIzq.position.set(-0.28, -0.65, 0);
-    femurIzq.rotation.z = -0.06;
-    this.registerMeshForRaycasting(femurIzq, 'femur_izq', 'oseo');
-    this.layerGroups.oseo.add(femurIzq);
-
-    // Fémur Derecho
-    const femurDer = new THREE.Mesh(femurGeo, boneMaterial.clone());
-    femurDer.position.set(0.28, -0.65, 0);
-    femurDer.rotation.z = 0.06;
-    this.registerMeshForRaycasting(femurDer, 'femur_der', 'oseo');
-    this.layerGroups.oseo.add(femurDer);
-
-    // Tibias de apoyo estético
-    const tibiaGeo = new THREE.CylinderGeometry(0.045, 0.035, 0.85, 12);
-    const tibiaIzq = new THREE.Mesh(tibiaGeo, boneMaterial.clone());
-    tibiaIzq.position.set(-0.31, -1.6, 0);
-    const tibiaDer = new THREE.Mesh(tibiaGeo, boneMaterial.clone());
-    tibiaDer.position.set(0.31, -1.6, 0);
-    this.layerGroups.oseo.add(tibiaIzq, tibiaDer);
-
-
-    // ============================================
-    // 2. CAPA MUSCULAR (MUSCLE LAYER)
-    // ============================================
-    const muscleMaterial = new THREE.MeshStandardMaterial({
-      color: 0xef4444,
-      roughness: 0.6,
-      metalness: 0.15,
-    });
-
-    // Deltoides (Hombros)
-    const deltoidGeo = new THREE.SphereGeometry(0.16, 16, 16);
-    deltoidGeo.scale(1, 1.4, 0.9);
-
-    const deltoidesIzq = new THREE.Mesh(deltoidGeo, muscleMaterial.clone());
-    deltoidesIzq.position.set(-0.65, 1.15, 0);
-    deltoidesIzq.rotation.z = 0.35;
-    this.registerMeshForRaycasting(deltoidesIzq, 'deltoides_izq', 'muscular');
-    this.layerGroups.muscular.add(deltoidesIzq);
-
-    const deltoidesDer = new THREE.Mesh(deltoidGeo, muscleMaterial.clone());
-    deltoidesDer.position.set(0.65, 1.15, 0);
-    deltoidesDer.rotation.z = -0.35;
-    this.registerMeshForRaycasting(deltoidesDer, 'deltoides_der', 'muscular');
-    this.layerGroups.muscular.add(deltoidesDer);
-
-    // Pectoral Mayor (Tórax anterior)
-    const pectoralGroup = new THREE.Group();
-    pectoralGroup.position.set(0, 1.0, 0.2);
-    const pecGeo = new THREE.BoxGeometry(0.24, 0.22, 0.08);
-    
-    const pecIzq = new THREE.Mesh(pecGeo, muscleMaterial.clone());
-    pecIzq.position.set(-0.16, 0, 0);
-    pecIzq.rotation.y = -0.15;
-    pectoralGroup.add(pecIzq);
-
-    const pecDer = new THREE.Mesh(pecGeo, muscleMaterial.clone());
-    pecDer.position.set(0.16, 0, 0);
-    pecDer.rotation.y = 0.15;
-    pectoralGroup.add(pecDer);
-
-    const pecHitBox = new THREE.Mesh(
-      new THREE.BoxGeometry(0.65, 0.3, 0.2),
-      new THREE.MeshBasicMaterial({ transparent: true, opacity: 0 })
-    );
-    pectoralGroup.add(pecHitBox);
-    this.registerMeshForRaycasting(pecHitBox, 'pectoral_mayor', 'muscular');
-    this.layerGroups.muscular.add(pectoralGroup);
-
-    // Bíceps Braquial (Brazos)
-    const bicepsGeo = new THREE.CapsuleGeometry(0.075, 0.28, 8, 16);
-
-    const bicepsIzq = new THREE.Mesh(bicepsGeo, muscleMaterial.clone());
-    bicepsIzq.position.set(-0.73, 0.74, 0.06);
-    this.registerMeshForRaycasting(bicepsIzq, 'biceps_braquial_izq', 'muscular');
-    this.layerGroups.muscular.add(bicepsIzq);
-
-    const bicepsDer = new THREE.Mesh(bicepsGeo, muscleMaterial.clone());
-    bicepsDer.position.set(0.73, 0.74, 0.06);
-    this.registerMeshForRaycasting(bicepsDer, 'biceps_braquial_der', 'muscular');
-    this.layerGroups.muscular.add(bicepsDer);
-
-    // Abdominales Rectos (Pared abdominal)
-    const absGroup = new THREE.Group();
-    absGroup.position.set(0, 0.45, 0.16);
-    for (let row = 0; row < 3; row++) {
-      const abGeo = new THREE.BoxGeometry(0.11, 0.08, 0.04);
-      const abL = new THREE.Mesh(abGeo, muscleMaterial.clone());
-      abL.position.set(-0.07, 0.12 - row * 0.11, 0);
-      const abR = new THREE.Mesh(abGeo, muscleMaterial.clone());
-      abR.position.set(0.07, 0.12 - row * 0.11, 0);
-      absGroup.add(abL, abR);
-    }
-    const absHitBox = new THREE.Mesh(
-      new THREE.BoxGeometry(0.35, 0.45, 0.15),
-      new THREE.MeshBasicMaterial({ transparent: true, opacity: 0 })
-    );
-    absGroup.add(absHitBox);
-    this.registerMeshForRaycasting(absHitBox, 'abdominales_recto', 'muscular');
-    this.layerGroups.muscular.add(absGroup);
-
-    // Cuádriceps Femorales (Muslos)
-    const quadGeo = new THREE.CapsuleGeometry(0.11, 0.48, 8, 16);
-
-    const quadIzq = new THREE.Mesh(quadGeo, muscleMaterial.clone());
-    quadIzq.position.set(-0.28, -0.62, 0.06);
-    this.registerMeshForRaycasting(quadIzq, 'cuadriceps_izq', 'muscular');
-    this.layerGroups.muscular.add(quadIzq);
-
-    const quadDer = new THREE.Mesh(quadGeo, muscleMaterial.clone());
-    quadDer.position.set(0.28, -0.62, 0.06);
-    this.registerMeshForRaycasting(quadDer, 'cuadriceps_der', 'muscular');
-    this.layerGroups.muscular.add(quadDer);
-
-
-    // ============================================
-    // 3. CAPA NERVIOSA (NERVE LAYER)
-    // ============================================
-    const nerveMaterial = new THREE.MeshStandardMaterial({
+  private buildNervousSystem(): void {
+    const nerveMat = new THREE.MeshStandardMaterial({
       color: 0x38bdf8,
       emissive: 0x0284c7,
-      emissiveIntensity: 0.8,
+      emissiveIntensity: 0.85,
       roughness: 0.2,
-      metalness: 0.3,
+      metalness: 0.4,
     });
 
-    // Cerebro / Encéfalo (Interior translúcido)
-    const brainGeo = new THREE.SphereGeometry(0.24, 20, 20);
-    brainGeo.scale(1, 0.85, 1.1);
-    const brainMesh = new THREE.Mesh(brainGeo, nerveMaterial.clone());
-    brainMesh.position.set(0, 1.74, 0);
-    this.registerMeshForRaycasting(brainMesh, 'cerebro_encefalo', 'nervioso');
+    // Encéfalo / Cerebro
+    const brainGeo = new THREE.SphereGeometry(0.24, 24, 24);
+    brainGeo.scale(1, 0.9, 1.15);
+    const brainMesh = new THREE.Mesh(brainGeo, nerveMat.clone());
+    brainMesh.position.set(0, 1.62, -0.02);
+    this.registerMeshForRaycasting(brainMesh, 'cerebro_encefalo', 'Cerebro y Hemisferios Cerebrales', 'nervioso');
     this.layerGroups.nervioso.add(brainMesh);
 
-    // Médula Espinal (Eje neuroespinal central)
-    const spineCordGeo = new THREE.CylinderGeometry(0.035, 0.03, 1.35, 12);
-    const spinalCord = new THREE.Mesh(spineCordGeo, nerveMaterial.clone());
-    spinalCord.position.set(0, 0.82, -0.04);
-    this.registerMeshForRaycasting(spinalCord, 'medula_espinal', 'nervioso');
+    // Médula Espinal
+    const cordGeo = new THREE.CylinderGeometry(0.035, 0.028, 1.45, 12);
+    const spinalCord = new THREE.Mesh(cordGeo, nerveMat.clone());
+    spinalCord.position.set(0, 0.75, -0.06);
+    this.registerMeshForRaycasting(spinalCord, 'medula_espinal', 'Médula Espinal Raquídea', 'nervioso');
     this.layerGroups.nervioso.add(spinalCord);
 
-    // Plexo Braquial (Red axilar emergente hacia brazos)
-    const brachialGroup = new THREE.Group();
-    brachialGroup.position.set(0, 1.25, 0);
-    const plexusCurveL = new THREE.CylinderGeometry(0.02, 0.015, 0.45, 8);
-    plexusCurveL.rotateZ(Math.PI / 3.2);
-    const plxL = new THREE.Mesh(plexusCurveL, nerveMaterial.clone());
-    plxL.position.set(-0.35, -0.05, 0);
-    brachialGroup.add(plxL);
+    // Nervios Ciáticos
+    const sciaticL = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.015, 1.1, 8), nerveMat.clone());
+    sciaticL.position.set(-0.24, -0.65, -0.06);
+    this.registerMeshForRaycasting(sciaticL, 'nervio_ciatico_izq', 'Nervio Ciático Izquierdo', 'nervioso');
 
-    const plexusCurveR = new THREE.CylinderGeometry(0.02, 0.015, 0.45, 8);
-    plexusCurveR.rotateZ(-Math.PI / 3.2);
-    const plxR = new THREE.Mesh(plexusCurveR, nerveMaterial.clone());
-    plxR.position.set(0.35, -0.05, 0);
-    brachialGroup.add(plxR);
+    const sciaticR = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.015, 1.1, 8), nerveMat.clone());
+    sciaticR.position.set(0.24, -0.65, -0.06);
+    this.registerMeshForRaycasting(sciaticR, 'nervio_ciatico_der', 'Nervio Ciático Derecho', 'nervioso');
 
-    const brachialHitBox = new THREE.Mesh(
-      new THREE.BoxGeometry(0.85, 0.25, 0.25),
-      new THREE.MeshBasicMaterial({ transparent: true, opacity: 0 })
-    );
-    brachialGroup.add(brachialHitBox);
-    this.registerMeshForRaycasting(brachialHitBox, 'plexo_braquial', 'nervioso');
-    this.layerGroups.nervioso.add(brachialGroup);
-
-    // Nervio Ciático (Troncos descendentes posteriores)
-    const sciaticGroup = new THREE.Group();
-    sciaticGroup.position.set(0, -0.3, -0.06);
-
-    const sciaticL = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.018, 0.95, 8), nerveMaterial.clone());
-    sciaticL.position.set(-0.25, -0.35, 0);
-    sciaticGroup.add(sciaticL);
-
-    const sciaticR = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.018, 0.95, 8), nerveMaterial.clone());
-    sciaticR.position.set(0.25, -0.35, 0);
-    sciaticGroup.add(sciaticR);
-
-    const sciaticHitBox = new THREE.Mesh(
-      new THREE.BoxGeometry(0.7, 0.95, 0.25),
-      new THREE.MeshBasicMaterial({ transparent: true, opacity: 0 })
-    );
-    sciaticHitBox.position.set(0, -0.35, 0);
-    sciaticGroup.add(sciaticHitBox);
-    this.registerMeshForRaycasting(sciaticHitBox, 'nervio_ciatico', 'nervioso');
-    this.layerGroups.nervioso.add(sciaticGroup);
+    this.layerGroups.nervioso.add(sciaticL, sciaticR);
   }
 
-  private registerMeshForRaycasting(mesh: THREE.Mesh, id: string, layer: 'oseo' | 'muscular' | 'nervioso'): void {
+  private registerMeshForRaycasting(
+    mesh: THREE.Mesh,
+    id: string,
+    cleanName: string,
+    layer: 'oseo' | 'muscular' | 'nervioso'
+  ): void {
     mesh.name = id;
-    const cleanName = id.replace(/_/g, ' ').toUpperCase();
     const meta: AnatomicalPartMeta = {
       id,
       name: cleanName,
@@ -679,19 +549,47 @@ export class AnatomyViewerComponent implements OnInit, OnDestroy {
     this.hoveredPart.set(null);
   }
 
+  /**
+   * Al hacer clic: Selecciona la parte anatómica, fija una etiqueta visible en 3D
+   * y enfoca la cámara suavemente.
+   */
   private performRaycastClick(): void {
     this.raycaster.setFromCamera(this.mouse, this.camera);
     const visibleMeshes = this.interactiveMeshes.filter((m) => m.visible && this.isAncestorVisible(m));
     const intersects = this.raycaster.intersectObjects(visibleMeshes, true);
 
     if (intersects.length > 0) {
-      const topHit = intersects[0].object as THREE.Mesh;
+      const hit = intersects[0];
+      const topHit = hit.object as THREE.Mesh;
       const meta = topHit.userData as AnatomicalPartMeta;
 
       if (meta && meta.id) {
+        // Fijar etiqueta en las coordenadas 3D del clic
+        const clickWorldPos = hit.point.clone();
+        this.activePin.set({
+          worldPosition: clickWorldPos,
+          name: meta.name,
+          layer: meta.layer,
+          id: meta.id,
+        });
+
+        // Actualizar servicio de anatomía
         this.anatomyService.selectPart(meta.id);
+
+        // Enfocar cámara hacia el objeto
         this.focusCameraOnObject(topHit);
       }
+    }
+  }
+
+  closeActivePin(): void {
+    this.activePin.set(null);
+  }
+
+  askAiAboutPin(): void {
+    const pin = this.activePin();
+    if (pin) {
+      this.anatomyService.consultChat(`Explícame la función biomecánica, inserciones y lesiones frecuentes de ${pin.name}`);
     }
   }
 
@@ -699,7 +597,7 @@ export class AnatomyViewerComponent implements OnInit, OnDestroy {
     this.currentHighlightedMesh = mesh;
     if (mesh.material instanceof THREE.MeshStandardMaterial) {
       mesh.material.emissive = new THREE.Color(0x38bdf8);
-      mesh.material.emissiveIntensity = 0.75;
+      mesh.material.emissiveIntensity = 0.85;
     }
   }
 
@@ -710,7 +608,7 @@ export class AnatomyViewerComponent implements OnInit, OnDestroy {
         const meta = this.currentHighlightedMesh.userData as AnatomicalPartMeta;
         if (meta?.layer === 'nervioso') {
           this.currentHighlightedMesh.material.emissive = new THREE.Color(0x0284c7);
-          this.currentHighlightedMesh.material.emissiveIntensity = 0.8;
+          this.currentHighlightedMesh.material.emissiveIntensity = 0.85;
         } else {
           this.currentHighlightedMesh.material.emissive = new THREE.Color(0x000000);
           this.currentHighlightedMesh.material.emissiveIntensity = 0;
@@ -734,17 +632,16 @@ export class AnatomyViewerComponent implements OnInit, OnDestroy {
     const center = new THREE.Vector3();
     box.getCenter(center);
 
-    // Calcular posición óptima con offset frontal y superior
     this.targetControlsTarget = center.clone();
     this.targetCameraPosition = new THREE.Vector3(
-      center.x + (center.x > 0 ? 0.8 : -0.8),
-      center.y + 0.3,
-      center.z + 2.2
+      center.x + (center.x >= 0 ? 0.6 : -0.6),
+      center.y + 0.2,
+      center.z + 1.8
     );
   }
 
   private focusOnPartById(partId: string): void {
-    const mesh = this.interactiveMeshes.find((m) => m.name === partId);
+    const mesh = this.interactiveMeshes.find((m) => m.name === partId || m.name.includes(partId));
     if (mesh && mesh.visible) {
       this.focusCameraOnObject(mesh);
     }
@@ -753,7 +650,7 @@ export class AnatomyViewerComponent implements OnInit, OnDestroy {
   private animate = (): void => {
     this.animationFrameId = requestAnimationFrame(this.animate);
 
-    // Interpolación suave (lerp) de la cámara hacia el objetivo seleccionado
+    // Interpolación de cámara
     if (this.targetCameraPosition && this.targetControlsTarget) {
       this.camera.position.lerp(this.targetCameraPosition, 0.08);
       this.controls.target.lerp(this.targetControlsTarget, 0.08);
@@ -765,13 +662,22 @@ export class AnatomyViewerComponent implements OnInit, OnDestroy {
     }
 
     this.controls.update();
+
+    // Actualizar proyección de la etiqueta 3D anclada
+    const pin = this.activePin();
+    if (pin && this.canvasRef) {
+      const p = pin.worldPosition.clone().project(this.camera);
+      const canvas = this.canvasRef.nativeElement;
+      const x = (p.x * 0.5 + 0.5) * canvas.clientWidth;
+      const y = (-(p.y * 0.5) + 0.5) * canvas.clientHeight;
+      const visible = p.z < 1.0;
+      this.pinScreenPos.set({ x, y, visible });
+    }
+
     this.renderer.render(this.scene, this.camera);
   };
 
-  // ============================================
-  // Controles Públicos del Toolbar
-  // ============================================
-
+  // Controles del toolbar
   setFilterLayer(layer: 'todos' | 'oseo' | 'muscular' | 'nervioso'): void {
     this.anatomyService.setLayer(layer);
   }
@@ -803,8 +709,9 @@ export class AnatomyViewerComponent implements OnInit, OnDestroy {
   }
 
   resetCamera(): void {
-    this.targetControlsTarget = new THREE.Vector3(0, 0.8, 0);
-    this.targetCameraPosition = new THREE.Vector3(0, 1.2, 5.2);
+    this.targetControlsTarget = new THREE.Vector3(0, 0.6, 0);
+    this.targetCameraPosition = new THREE.Vector3(0, 1.2, 4.8);
+    this.activePin.set(null);
   }
 
   getFilterBtnClass(layer: string): string {
@@ -826,5 +733,92 @@ export class AnatomyViewerComponent implements OnInit, OnDestroy {
       default:
         return 'bg-slate-400';
     }
+  }
+
+  private formatBoneName(raw: string): string {
+    const dict: Record<string, string> = {
+      frontal: 'Hueso Frontal',
+      occipital: 'Hueso Occipital',
+      sphenoid: 'Hueso Esfenoides',
+      ethmoid: 'Hueso Etmoides',
+      vomer: 'Hueso Vómer',
+      mandible: 'Mandíbula',
+      hyoid: 'Hueso Hioides',
+      parietal_l: 'Parietal Izquierdo',
+      parietal_r: 'Parietal Derecho',
+      temporal_l: 'Temporal Izquierdo',
+      temporal_r: 'Temporal Derecho',
+      nasal_l: 'Hueso Nasal Izquierdo',
+      nasal_r: 'Hueso Nasal Derecho',
+      maxilla_l: 'Maxilar Superior Izquierdo',
+      maxilla_r: 'Maxilar Superior Derecho',
+      clavicle_l: 'Clavícula Izquierda',
+      clavicle_r: 'Clavícula Derecha',
+      scapula_l: 'Escápula Izquierda',
+      scapula_r: 'Escápula Derecha',
+      sternum: 'Esternón',
+      humerus_l: 'Húmero Izquierdo',
+      humerus_r: 'Húmero Derecho',
+      radius_l: 'Radio Izquierdo',
+      radius_r: 'Radio Derecho',
+      ulna_l: 'Cúbito Izquierdo',
+      ulna_r: 'Cúbito Derecho',
+      femur_l: 'Fémur Izquierdo',
+      femur_r: 'Fémur Derecho',
+      patella_l: 'Rótula Izquierda',
+      patella_r: 'Rótula Derecha',
+      tibia_l: 'Tibia Izquierda',
+      tibia_r: 'Tibia Derecha',
+      fibula_l: 'Peroné Izquierdo',
+      fibula_r: 'Peroné Derecho',
+      pelvis: 'Pelvis y Coxal',
+      sacrum: 'Hueso Sacro',
+      coccyx: 'Cóccix',
+    };
+
+    const key = raw.toLowerCase();
+    if (dict[key]) return dict[key];
+
+    // Vértebras (c1..c7, t1..t12, l1..l5)
+    if (/^c[1-7]$/.test(key)) return `Vértebra Cervical ${key.toUpperCase()}`;
+    if (/^t([1-9]|1[0-2])$/.test(key)) return `Vértebra Torácica ${key.toUpperCase()}`;
+    if (/^l[1-5]$/.test(key)) return `Vértebra Lumbar ${key.toUpperCase()}`;
+    if (key.startsWith('rib_') || key.startsWith('cc')) {
+      const num = key.replace(/[^0-9]/g, '');
+      const side = key.endsWith('_l') ? 'Izquierda' : 'Derecha';
+      return `Costilla ${num} (${side})`;
+    }
+
+    let clean = raw.replace(/_l$/i, ' Izquierdo').replace(/_r$/i, ' Derecho').replace(/_/g, ' ');
+    return clean.charAt(0).toUpperCase() + clean.slice(1);
+  }
+
+  private formatMuscleName(raw: string): string {
+    const dict: Record<string, string> = {
+      frontalis_l: 'Músculo Frontal Izquierdo',
+      frontalis_r: 'Músculo Frontal Derecho',
+      occipitalis_l: 'Músculo Occipital Izquierdo',
+      occipitalis_r: 'Músculo Occipital Derecho',
+      orbicularis_oculi_l: 'Orbicular del Ojo Izquierdo',
+      orbicularis_oculi_r: 'Orbicular del Ojo Derecho',
+      biceps_brachii_l: 'Bíceps Braquial Izquierdo',
+      biceps_brachii_r: 'Bíceps Braquial Derecho',
+      deltoid_l: 'Músculo Deltoides Izquierdo',
+      deltoid_r: 'Músculo Deltoides Derecho',
+      pectoralis_major_l: 'Pectoral Mayor Izquierdo',
+      pectoralis_major_r: 'Pectoral Mayor Derecho',
+      rectus_abdominis_l: 'Recto Abdominal Izquierdo',
+      rectus_abdominis_r: 'Recto Abdominal Derecho',
+      rectus_femoris_l: 'Recto Femoral Izquierdo (Cuádriceps)',
+      rectus_femoris_r: 'Recto Femoral Derecho (Cuádriceps)',
+      gastrocnemius_l: 'Gastrocnemio Izquierdo (Gemelo)',
+      gastrocnemius_r: 'Gastrocnemio Derecho (Gemelo)',
+    };
+
+    const key = raw.toLowerCase();
+    if (dict[key]) return dict[key];
+
+    let clean = raw.replace(/_l$/i, ' Izquierdo').replace(/_r$/i, ' Derecho').replace(/_/g, ' ');
+    return 'Músculo ' + clean.charAt(0).toUpperCase() + clean.slice(1);
   }
 }
