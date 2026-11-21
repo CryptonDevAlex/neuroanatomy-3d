@@ -12,9 +12,10 @@ import { CommonModule } from '@angular/common';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
 import { AnatomyApiService } from '../../services/anatomy-api.service';
 
-type AnatomyLayer = 'cuerpo' | 'oseo' | 'muscular' | 'nervioso' | 'organos';
+type AnatomyLayer = 'oseo' | 'muscular' | 'nervioso' | 'organos';
 
 interface AnatomicalPartMeta {
   id: string;
@@ -56,9 +57,9 @@ interface ClickedPin {
         </div>
       }
 
-      <!-- ETIQUETA 3D ANCLADA AL HACER CLIC EN CUALQUIER PARTE -->
+      <!-- ETIQUETA 3D ANCLADA AL HACER CLIC -->
       @if (activePin() && pinScreenPos().visible) {
-        <!-- Punto de anclaje pulsante con halo sobre la superficie 3D -->
+        <!-- Punto de anclaje luminoso sobre la estructura seleccionada -->
         <div
           class="absolute pointer-events-none z-30 transform -translate-x-1/2 -translate-y-1/2"
           [style.left.px]="pinScreenPos().x"
@@ -70,7 +71,7 @@ interface ClickedPin {
           </div>
         </div>
 
-        <!-- Tarjeta de Etiqueta con Datos y Botón de Consulta -->
+        <!-- Tarjeta de Información Anclada en 3D -->
         <div
           class="absolute z-30 pointer-events-auto transform -translate-y-1/2 transition-all duration-75"
           [style.left.px]="pinScreenPos().x + 18"
@@ -93,7 +94,7 @@ interface ClickedPin {
               </button>
             </div>
 
-            <!-- Nombre de la Parte Anatómica -->
+            <!-- Nombre de la Estructura -->
             <div class="text-sm font-extrabold text-white tracking-wide">
               {{ activePin()!.name }}
             </div>
@@ -110,7 +111,7 @@ interface ClickedPin {
         </div>
       }
 
-      <!-- Barra Superior de Controles de Capas y Vista -->
+      <!-- Barra Superior de Controles de Capas -->
       <div class="absolute top-4 left-4 z-20 flex flex-wrap items-center gap-1.5 bg-studio-900/90 backdrop-blur-md p-1.5 rounded-xl border border-slate-700/60 shadow-2xl max-w-[90vw]">
         <span class="text-xs font-semibold px-2 text-slate-400 uppercase tracking-widest hidden md:inline">Capas:</span>
 
@@ -120,14 +121,6 @@ interface ClickedPin {
           class="px-2.5 py-1 text-xs font-medium rounded-lg transition-all"
         >
           🌐 Todo
-        </button>
-
-        <button
-          (click)="setFilterLayer('cuerpo')"
-          [class]="getFilterBtnClass('cuerpo')"
-          class="px-2.5 py-1 text-xs font-medium rounded-lg transition-all"
-        >
-          👤 Cuerpo
         </button>
 
         <button
@@ -184,7 +177,7 @@ interface ClickedPin {
         </button>
       </div>
 
-      <!-- Leyenda y Conteo de Mallas Reales en Vivo -->
+      <!-- Leyenda Inferior con Conteo en Tiempo Real -->
       <div class="absolute bottom-4 left-4 z-20 bg-studio-900/90 backdrop-blur-md px-3.5 py-2 rounded-xl border border-slate-700/60 shadow-xl text-xs text-slate-400 flex flex-wrap items-center gap-3">
         <span class="flex items-center gap-1.5">
           <span class="w-2.5 h-2.5 rounded-full bg-slate-200 shadow-[0_0_8px_#cbd5e1]"></span> 278 Huesos
@@ -200,12 +193,12 @@ interface ClickedPin {
         </span>
       </div>
 
-      <!-- Spinner de Carga de Modelos HD -->
+      <!-- Spinner de Descompresión Meshopt y Carga HD -->
       @if (isLoadingModel()) {
-        <div class="absolute inset-0 z-40 bg-studio-900/80 backdrop-blur-sm flex flex-col items-center justify-center gap-3">
+        <div class="absolute inset-0 z-40 bg-studio-900/85 backdrop-blur-sm flex flex-col items-center justify-center gap-3">
           <div class="w-12 h-12 border-4 border-cyan-500 border-t-transparent rounded-full animate-spin"></div>
-          <span class="text-sm font-mono text-cyan-300">Cargando Atlas Anatómico 3D Realista Completo...</span>
-          <span class="text-[11px] text-slate-400 font-mono">Z-Anatomy / BodyParts3D Multi-Layer Engine</span>
+          <span class="text-sm font-mono text-cyan-300">Descomprimiendo Atlas Anatómico Realista HD...</span>
+          <span class="text-[11px] text-slate-400 font-mono">Decodificando mallas con MeshoptDecoder</span>
         </div>
       }
     </div>
@@ -235,7 +228,6 @@ export class AnatomyViewerComponent implements OnInit, OnDestroy {
   // Grupos por capas
   private rootAnatomyGroup = new THREE.Group();
   private layerGroups: Record<AnatomyLayer, THREE.Group> = {
-    cuerpo: new THREE.Group(),
     oseo: new THREE.Group(),
     muscular: new THREE.Group(),
     nervioso: new THREE.Group(),
@@ -248,6 +240,10 @@ export class AnatomyViewerComponent implements OnInit, OnDestroy {
 
   private targetCameraPosition: THREE.Vector3 | null = null;
   private targetControlsTarget: THREE.Vector3 | null = null;
+
+  // Transformación maestra unificada para sincronización milimétrica
+  private masterScale: number = 1.0;
+  private masterOffset: THREE.Vector3 = new THREE.Vector3(0, 0, 0);
 
   constructor() {
     effect(() => {
@@ -267,7 +263,7 @@ export class AnatomyViewerComponent implements OnInit, OnDestroy {
     this.initThreeScene();
     this.setupLighting();
     this.setupGridAndStudio();
-    this.loadAllRealisticAnatomyModels();
+    this.loadAllAnatomicalLayersSynchronously();
     this.setupEventListeners();
     this.animate();
   }
@@ -312,7 +308,6 @@ export class AnatomyViewerComponent implements OnInit, OnDestroy {
     this.controls.maxDistance = 14;
     this.controls.maxPolarAngle = Math.PI / 2 + 0.15;
 
-    this.rootAnatomyGroup.add(this.layerGroups.cuerpo);
     this.rootAnatomyGroup.add(this.layerGroups.oseo);
     this.rootAnatomyGroup.add(this.layerGroups.muscular);
     this.rootAnatomyGroup.add(this.layerGroups.nervioso);
@@ -321,10 +316,10 @@ export class AnatomyViewerComponent implements OnInit, OnDestroy {
   }
 
   private setupLighting(): void {
-    const ambientLight = new THREE.AmbientLight(0x475569, 1.5);
+    const ambientLight = new THREE.AmbientLight(0x64748b, 1.6);
     this.scene.add(ambientLight);
 
-    const keyLight = new THREE.DirectionalLight(0xffffff, 2.5);
+    const keyLight = new THREE.DirectionalLight(0xffffff, 2.6);
     keyLight.position.set(5, 7, 6);
     keyLight.castShadow = true;
     this.scene.add(keyLight);
@@ -355,65 +350,36 @@ export class AnatomyViewerComponent implements OnInit, OnDestroy {
   }
 
   /**
-   * Carga de forma integrada y coordinada todos los sistemas anatómicos reales:
-   * - Cuerpo humano completo realista (human_anatomy.glb)
-   * - Esqueleto óseo completo (skeleton.glb, 278 huesos)
-   * - Sistema muscular completo (muscles.glb, 701 músculos)
-   * - Sistema nervioso completo (nerves.glb, 747 nervios)
-   * - Encéfalo y cerebro completo (brain.glb, 207 estructuras)
-   * - Órganos viscerales completos (organs.glb, 102 órganos)
+   * Carga coordinada de los modelos de Z-Anatomy utilizando MeshoptDecoder
+   * para descompactar EXT_meshopt_compression:
    */
-  private loadAllRealisticAnatomyModels(): void {
+  private loadAllAnatomicalLayersSynchronously(): void {
     const loader = new GLTFLoader();
+    // VITAL: Configurar MeshoptDecoder para desempaquetar muscles.glb, nerves.glb, brain.glb y organs.glb
+    loader.setMeshoptDecoder(MeshoptDecoder);
+
     const targetHeight = 3.6;
 
-    const normalizeTransform = (obj: THREE.Object3D) => {
-      const box = new THREE.Box3().setFromObject(obj);
-      const size = box.getSize(new THREE.Vector3());
-      const center = box.getCenter(new THREE.Vector3());
-
-      const scale = targetHeight / (size.y || 1);
-      obj.scale.setScalar(scale);
-      obj.position.x = -center.x * scale;
-      obj.position.y = -center.y * scale + 0.3;
-      obj.position.z = -center.z * scale;
-    };
-
-    // 1. CUERPO HUMANO COMPLETO REALISTA (Piel / Silueta Translúcida)
-    loader.load(
-      'assets/models/human_anatomy.glb',
-      (gltf) => {
-        const body = gltf.scene;
-        normalizeTransform(body);
-
-        const skinMaterial = new THREE.MeshStandardMaterial({
-          color: 0xf1f5f9,
-          roughness: 0.4,
-          metalness: 0.1,
-          transparent: true,
-          opacity: 0.35, // Piel translúcida médica estilo holograma clínico
-        });
-
-        body.traverse((child) => {
-          if (child instanceof THREE.Mesh) {
-            child.material = skinMaterial.clone();
-            child.renderOrder = 1;
-            this.registerMeshForRaycasting(child, 'cuerpo_humano_superficie', 'Cuerpo Humano Completo (Piel y Silueta)', 'cuerpo');
-          }
-        });
-
-        this.layerGroups.cuerpo.add(body);
-      },
-      undefined,
-      (err) => console.warn('human_anatomy.glb no cargado:', err)
-    );
-
-    // 2. ESQUELETO ÓSEO REAL (skeleton.glb)
+    // 1. Cargar ESQUELETO (skeleton.glb) como ancla maestra
     loader.load(
       'assets/models/skeleton.glb',
       (gltf) => {
         const skeleton = gltf.scene;
-        normalizeTransform(skeleton);
+
+        // Calcular la caja delimitadora maestra para alinear el resto de órganos y músculos
+        const box = new THREE.Box3().setFromObject(skeleton);
+        const size = box.getSize(new THREE.Vector3());
+        const center = box.getCenter(new THREE.Vector3());
+
+        this.masterScale = targetHeight / (size.y || 1);
+        this.masterOffset = new THREE.Vector3(
+          -center.x * this.masterScale,
+          -center.y * this.masterScale + 0.3,
+          -center.z * this.masterScale
+        );
+
+        skeleton.scale.setScalar(this.masterScale);
+        skeleton.position.copy(this.masterOffset);
 
         const boneMat = new THREE.MeshStandardMaterial({
           color: 0xf8fafc,
@@ -433,22 +399,34 @@ export class AnatomyViewerComponent implements OnInit, OnDestroy {
 
         this.layerGroups.oseo.add(skeleton);
         this.isLoadingModel.set(false);
+
+        // Una vez calculada la alineación maestra, cargar las demás capas comprimidas
+        this.loadMusclesLayer(loader);
+        this.loadNervousLayer(loader);
+        this.loadOrgansLayer(loader);
       },
       undefined,
-      (err) => console.warn('skeleton.glb no cargado:', err)
+      (err) => {
+        console.error('Error cargando skeleton.glb:', err);
+        this.isLoadingModel.set(false);
+      }
     );
+  }
 
-    // 3. SISTEMA MUSCULAR REAL (muscles.glb)
+  // 2. Cargar MÚSCULOS REALES (muscles.glb, 701 músculos)
+  private loadMusclesLayer(loader: GLTFLoader): void {
     loader.load(
       'assets/models/muscles.glb',
       (gltf) => {
         const muscles = gltf.scene;
-        normalizeTransform(muscles);
+        // Aplicar la misma escala y traslación exacta del esqueleto
+        muscles.scale.setScalar(this.masterScale);
+        muscles.position.copy(this.masterOffset);
 
         const muscleMat = new THREE.MeshStandardMaterial({
-          color: 0xef4444,
-          roughness: 0.55,
-          metalness: 0.15,
+          color: 0xdc2626, // Rojo estriado muscular realista
+          roughness: 0.45,
+          metalness: 0.12,
         });
 
         muscles.traverse((child) => {
@@ -461,22 +439,27 @@ export class AnatomyViewerComponent implements OnInit, OnDestroy {
         });
 
         this.layerGroups.muscular.add(muscles);
+        console.log('✓ muscles.glb cargado con éxito:', muscles.children.length);
       },
       undefined,
-      (err) => console.warn('muscles.glb no cargado:', err)
+      (err) => console.error('Error cargando muscles.glb:', err)
     );
+  }
 
-    // 4. SISTEMA NERVIOSO COMPLETO REAL (nerves.glb)
+  // 3. Cargar SISTEMA NERVIOSO Y ENCÉFALO REALES (nerves.glb + brain.glb)
+  private loadNervousLayer(loader: GLTFLoader): void {
+    // Nervios (747 estructuras)
     loader.load(
       'assets/models/nerves.glb',
       (gltf) => {
         const nerves = gltf.scene;
-        normalizeTransform(nerves);
+        nerves.scale.setScalar(this.masterScale);
+        nerves.position.copy(this.masterOffset);
 
         const nerveMat = new THREE.MeshStandardMaterial({
           color: 0x38bdf8,
           emissive: 0x0284c7,
-          emissiveIntensity: 0.85,
+          emissiveIntensity: 0.95, // Emisión bioluminiscente de axones
           roughness: 0.2,
           metalness: 0.3,
         });
@@ -490,24 +473,26 @@ export class AnatomyViewerComponent implements OnInit, OnDestroy {
         });
 
         this.layerGroups.nervioso.add(nerves);
+        console.log('✓ nerves.glb cargado con éxito');
       },
       undefined,
-      (err) => console.warn('nerves.glb no cargado:', err)
+      (err) => console.error('Error cargando nerves.glb:', err)
     );
 
-    // 5. ENCÉFALO Y CEREBRO REAL (brain.glb)
+    // Encéfalo / Cerebro (207 estructuras reales de giros y surcos)
     loader.load(
       'assets/models/brain.glb',
       (gltf) => {
         const brain = gltf.scene;
-        normalizeTransform(brain);
+        brain.scale.setScalar(this.masterScale);
+        brain.position.copy(this.masterOffset);
 
         const brainMat = new THREE.MeshStandardMaterial({
           color: 0x67e8f9,
-          emissive: 0x0891b2,
-          emissiveIntensity: 0.75,
-          roughness: 0.25,
-          metalness: 0.3,
+          emissive: 0x0369a1,
+          emissiveIntensity: 0.6,
+          roughness: 0.3,
+          metalness: 0.2,
         });
 
         brain.traverse((child) => {
@@ -519,38 +504,64 @@ export class AnatomyViewerComponent implements OnInit, OnDestroy {
         });
 
         this.layerGroups.nervioso.add(brain);
+        console.log('✓ brain.glb cargado con éxito');
       },
       undefined,
-      (err) => console.warn('brain.glb no cargado:', err)
+      (err) => console.error('Error cargando brain.glb:', err)
     );
+  }
 
-    // 6. ÓRGANOS VISCERALES REALES (organs.glb)
+  // 4. Cargar ÓRGANOS VISCERALES REALES (organs.glb, 102 órganos)
+  private loadOrgansLayer(loader: GLTFLoader): void {
     loader.load(
       'assets/models/organs.glb',
       (gltf) => {
         const organs = gltf.scene;
-        normalizeTransform(organs);
-
-        const organMat = new THREE.MeshStandardMaterial({
-          color: 0x10b981,
-          emissive: 0x047857,
-          emissiveIntensity: 0.4,
-          roughness: 0.4,
-          metalness: 0.1,
-        });
+        organs.scale.setScalar(this.masterScale);
+        organs.position.copy(this.masterOffset);
 
         organs.traverse((child) => {
           if (child instanceof THREE.Mesh) {
-            child.material = organMat.clone();
             const cleanName = this.formatOrganName(child.name);
+            // Colores anatómicos diferenciados para órganos
+            let organColor = 0x10b981;
+            let emissiveColor = 0x047857;
+
+            const n = child.name.toLowerCase();
+            if (n.includes('heart')) {
+              organColor = 0xbe123c; // Corazón rojo carmesí
+              emissiveColor = 0x881337;
+            } else if (n.includes('lung')) {
+              organColor = 0xf472b6; // Pulmones rosados
+              emissiveColor = 0x9d174d;
+            } else if (n.includes('liver')) {
+              organColor = 0x92400e; // Hígado pardo rojizo
+              emissiveColor = 0x78350f;
+            } else if (n.includes('kidney')) {
+              organColor = 0x831843; // Riñón púrpura oscuro
+              emissiveColor = 0x500724;
+            } else if (n.includes('stomach') || n.includes('colon')) {
+              organColor = 0xf59e0b; // Tubo digestivo ocre
+              emissiveColor = 0xb45309;
+            }
+
+            child.material = new THREE.MeshStandardMaterial({
+              color: organColor,
+              emissive: emissiveColor,
+              emissiveIntensity: 0.35,
+              roughness: 0.35,
+              metalness: 0.1,
+            });
+
             this.registerMeshForRaycasting(child, child.name, cleanName, 'organos');
           }
         });
 
         this.layerGroups.organos.add(organs);
+        console.log('✓ organs.glb cargado con éxito');
       },
       undefined,
-      (err) => console.warn('organs.glb no cargado:', err)
+      (err) => console.error('Error cargando organs.glb:', err)
     );
   }
 
@@ -572,9 +583,7 @@ export class AnatomyViewerComponent implements OnInit, OnDestroy {
           ? 0xef4444
           : layer === 'nervioso'
           ? 0x38bdf8
-          : layer === 'organos'
-          ? 0x10b981
-          : 0x94a3b8,
+          : 0x10b981,
     };
     mesh.userData = meta;
     this.interactiveMeshes.push(mesh);
@@ -677,7 +686,7 @@ export class AnatomyViewerComponent implements OnInit, OnDestroy {
     this.currentHighlightedMesh = mesh;
     if (mesh.material instanceof THREE.MeshStandardMaterial) {
       mesh.material.emissive = new THREE.Color(0x38bdf8);
-      mesh.material.emissiveIntensity = 0.9;
+      mesh.material.emissiveIntensity = 0.95;
     }
   }
 
@@ -688,10 +697,10 @@ export class AnatomyViewerComponent implements OnInit, OnDestroy {
         const meta = this.currentHighlightedMesh.userData as AnatomicalPartMeta;
         if (meta?.layer === 'nervioso') {
           this.currentHighlightedMesh.material.emissive = new THREE.Color(0x0284c7);
-          this.currentHighlightedMesh.material.emissiveIntensity = 0.85;
+          this.currentHighlightedMesh.material.emissiveIntensity = 0.95;
         } else if (meta?.layer === 'organos') {
           this.currentHighlightedMesh.material.emissive = new THREE.Color(0x047857);
-          this.currentHighlightedMesh.material.emissiveIntensity = 0.4;
+          this.currentHighlightedMesh.material.emissiveIntensity = 0.35;
         } else {
           this.currentHighlightedMesh.material.emissive = new THREE.Color(0x000000);
           this.currentHighlightedMesh.material.emissiveIntensity = 0;
@@ -764,13 +773,11 @@ export class AnatomyViewerComponent implements OnInit, OnDestroy {
 
   private applyLayerVisibility(layer: string): void {
     if (layer === 'todos') {
-      this.layerGroups.cuerpo.visible = true;
       this.layerGroups.oseo.visible = true;
       this.layerGroups.muscular.visible = true;
       this.layerGroups.nervioso.visible = true;
       this.layerGroups.organos.visible = true;
     } else {
-      this.layerGroups.cuerpo.visible = layer === 'cuerpo';
       this.layerGroups.oseo.visible = layer === 'oseo';
       this.layerGroups.muscular.visible = layer === 'muscular';
       this.layerGroups.nervioso.visible = layer === 'nervioso';
@@ -808,8 +815,6 @@ export class AnatomyViewerComponent implements OnInit, OnDestroy {
 
   getLayerDotClass(layer: string): string {
     switch (layer) {
-      case 'cuerpo':
-        return 'bg-indigo-400';
       case 'oseo':
         return 'bg-slate-200';
       case 'muscular':
