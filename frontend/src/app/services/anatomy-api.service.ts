@@ -223,14 +223,20 @@ export class AnatomyApiService {
 
   private inferLayer(partId: string): string {
     const id = partId.toLowerCase();
-    if (id.includes('craneo') || id.includes('columna') || id.includes('torax') || id.includes('costilla') || id.includes('humero') || id.includes('femur')) {
+    if (id.includes('nerve') || id.includes('ciatic') || id.includes('brain') || id.includes('radial') || id.includes('plexus') || id.includes('medul') || id.includes('encefal') || id.includes('sfg') || id.includes('mfg')) {
+      return 'nervioso';
+    }
+    if (id.includes('organ') || id.includes('colon') || id.includes('adrenal') || id.includes('appendix') || id.includes('bile') || id.includes('heart') || id.includes('lung') || id.includes('liver') || id.includes('stomach') || id.includes('kidney')) {
+      return 'organos';
+    }
+    if (id.includes('body') || id.includes('skin') || id.includes('tripo') || id.includes('cuerpo')) {
+      return 'cuerpo';
+    }
+    if (id.includes('craneo') || id.includes('frontal') || id.includes('mandib') || id.includes('parietal') || id.includes('columna') || id.includes('torax') || id.includes('costilla') || id.includes('rib') || id.includes('humero') || id.includes('femur') || id.includes('tibia') || id.includes('pelvis') || id.includes('clavic')) {
       return 'oseo';
     }
-    if (id.includes('biceps') || id.includes('cuadriceps') || id.includes('deltoides') || id.includes('pectoral') || id.includes('abdominal')) {
+    if (id.includes('biceps') || id.includes('cuadriceps') || id.includes('deltoid') || id.includes('pectoral') || id.includes('abdominal') || id.includes('rectus') || id.includes('frontalis') || id.includes('occipitalis') || id.includes('gastrocnemius')) {
       return 'muscular';
-    }
-    if (id.includes('cerebro') || id.includes('medula') || id.includes('nervio') || id.includes('ciatico') || id.includes('plexo')) {
-      return 'nervioso';
     }
     return 'general';
   }
