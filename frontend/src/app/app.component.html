@@ -1,0 +1,56 @@
+<header class="h-14 bg-studio-900 border-b border-slate-800 px-4 flex items-center justify-between select-none z-40 shrink-0">
+  <!-- Marca y Título -->
+  <div class="flex items-center gap-3">
+    <div class="w-8 h-8 rounded-lg bg-gradient-to-tr from-cyan-600 to-indigo-600 flex items-center justify-center shadow-lg shadow-cyan-500/20 text-white font-black text-sm">
+      3D
+    </div>
+    <div>
+      <h1 class="text-sm font-bold tracking-tight text-white flex items-center gap-2">
+        NeuroAnatomy 3D
+        <span class="text-[10px] px-1.5 py-0.2 rounded bg-cyan-950/60 text-cyan-400 border border-cyan-800/50 font-mono font-medium">v1.0</span>
+      </h1>
+      <p class="text-[10px] text-slate-400 hidden sm:block">Atlas Anatómico Interactivo & Asistente Clínico RAG</p>
+    </div>
+  </div>
+
+  <!-- Estado del Sistema & Badges -->
+  <div class="flex items-center gap-3">
+    <!-- Indicador de Backend RAG -->
+    <div class="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-studio-800 border border-slate-700/80 text-[11px] font-mono">
+      <span
+        class="w-2 h-2 rounded-full"
+        [ngClass]="anatomyService.backendOnline() ? 'bg-emerald-400 shadow-[0_0_8px_#34d399]' : 'bg-amber-400 shadow-[0_0_8px_#fbbf24]'"
+      ></span>
+      <span class="text-slate-300">
+        {{ anatomyService.backendOnline() ? 'RAG FastAPI Online' : 'Modo Mock Simulado' }}
+      </span>
+      <span class="text-[9px] text-slate-500 uppercase">({{ anatomyService.llmProvider() }})</span>
+    </div>
+
+    <!-- Enlace a GitHub -->
+    <a
+      href="https://github.com/CryptonDevAlex/neuroanatomy-3d"
+      target="_blank"
+      rel="noopener noreferrer"
+      class="text-xs px-3 py-1.5 rounded-lg bg-studio-800 hover:bg-studio-700 border border-slate-700 hover:border-slate-600 text-slate-300 hover:text-white transition-all flex items-center gap-1.5"
+    >
+      <svg class="w-4 h-4 fill-current" viewBox="0 0 24 24">
+        <path fill-rule="evenodd" clip-rule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.53 1.032 1.53 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z"/>
+      </svg>
+      <span class="hidden md:inline font-mono text-[11px]">GitHub</span>
+    </a>
+  </div>
+</header>
+
+<!-- Layout Principal Dividido 70% / 30% -->
+<main class="flex-1 flex flex-col lg:flex-row h-[calc(100vh-3.5rem)] overflow-hidden">
+  <!-- Visor 3D Interactivo (70%) -->
+  <section class="w-full lg:w-[70%] h-[52vh] lg:h-full relative overflow-hidden">
+    <app-anatomy-viewer></app-anatomy-viewer>
+  </section>
+
+  <!-- Panel Clínico con RAG (30%) -->
+  <section class="w-full lg:w-[30%] h-[48vh] lg:h-full relative overflow-hidden">
+    <app-clinical-chat></app-clinical-chat>
+  </section>
+</main>
