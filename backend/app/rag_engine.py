@@ -175,22 +175,33 @@ class MedicalRAGEngine:
         """Identifica el tema exacto que el usuario está preguntando."""
         q = normalize_text(query)
 
-        # 1. Conceptos fundamentales universales
-        if any(term in q for term in ["que es el hueso", "que son los huesos", "tejido oseo", "el hueso", "los huesos"]):
-            return ("El Hueso y el Tejido Óseo", "oseo", "hueso_general")
+        general_topics = [
+            (
+                ("que es el hueso", "que son los huesos", "tejido oseo", "definicion de hueso", "hueso general"),
+                ("El Hueso y el Tejido Óseo", "oseo", "hueso_general"),
+            ),
+            (
+                ("que es el musculo", "que son los musculos", "tejido muscular", "definicion de musculo", "musculo general"),
+                ("El Músculo y el Tejido Muscular", "muscular", "musculo_general"),
+            ),
+            (
+                ("sistema nervioso", "que es una neurona", "tejido nervioso", "la neurona", "las neuronas"),
+                ("El Sistema Nervioso y la Neurona", "nervioso", "sistema_nervioso_general"),
+            ),
+        ]
+        for patterns, result in general_topics:
+            if any(pattern in q for pattern in patterns):
+                return result
 
-        if any(term in q for term in ["que es el musculo", "que son los musculos", "tejido muscular", "el musculo", "los musculos"]):
-            return ("El Músculo y el Tejido Muscular", "muscular", "musculo_general")
-
-        if any(term in q for term in ["sistema nervioso", "que es una neurona", "la neurona", "las neuronas", "el nervio", "nervios"]):
-            return ("El Sistema Nervioso y la Neurona", "nervioso", "sistema_nervioso_general")
-
-        # 2. Órganos y estructuras específicas en la pregunta
         anatomy_keywords = {
+            "nervio ciatico": ("Nervio Ciático (Isquiático)", "nervioso", "nervio_ciatico"),
+            "plexo braquial": ("Plexo Braquial", "nervioso", "plexo_braquial"),
+            "columna vertebral": ("Columna Vertebral y Canal Raquídeo", "oseo", "columna_vertebral"),
+            "canal raquideo": ("Columna Vertebral y Canal Raquídeo", "oseo", "columna_vertebral"),
+            "torax costillas": ("Tórax Óseo y Costillas", "oseo", "torax_costillas"),
             "craneo": ("Cráneo y Macizo Facial", "oseo", "craneo"),
             "cabeza": ("Cráneo y Macizo Facial", "oseo", "craneo"),
             "mandibula": ("Mandíbula", "oseo", "craneo"),
-            "columna": ("Columna Vertebral y Canal Raquídeo", "oseo", "columna_vertebral"),
             "vertebra": ("Columna Vertebral y Vértebras", "oseo", "columna_vertebral"),
             "torax": ("Tórax Óseo y Costillas", "oseo", "torax_costillas"),
             "costilla": ("Costillas y Tórax", "oseo", "torax_costillas"),
@@ -210,17 +221,22 @@ class MedicalRAGEngine:
             "ciatico": ("Nervio Ciático (Isquiático)", "nervioso", "nervio_ciatico"),
             "plexo": ("Plexo Braquial", "nervioso", "plexo_braquial"),
         }
-
-        for kw, (name, layer, target_id) in anatomy_keywords.items():
+        ordered_keywords = sorted(anatomy_keywords, key=len, reverse=True)
+        for kw in ordered_keywords:
             if kw in q:
-                return (name, layer, target_id)
+                return anatomy_keywords[kw]
 
-        # 3. Preguntas deícticas asociadas a la selección del modelo 3D
         if selected_part:
             norm_part = normalize_text(selected_part)
-            for kw, (name, layer, target_id) in anatomy_keywords.items():
+            selected_chunk = next(
+                (c for c in self.chunks if normalize_text(c.part_id) == norm_part),
+                None,
+            )
+            if selected_chunk:
+                return (selected_chunk.title, selected_chunk.system_layer, selected_part)
+            for kw in ordered_keywords:
                 if kw in norm_part:
-                    return (name, layer, target_id)
+                    return anatomy_keywords[kw]
             return (selected_part.replace("_", " ").title(), "auto", selected_part)
 
         return ("Anatomía Humana", "general", None)
@@ -233,15 +249,22 @@ class MedicalRAGEngine:
         system_layer: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """Realiza búsqueda semántica en ChromaDB o en memoria."""
+        where_clauses: List[Dict[str, Any]] = []
+        if system_layer and system_layer not in ("todos", "general", "all", "auto"):
+            where_clauses.append({"system_layer": system_layer})
+        if target_part_id and target_part_id not in ("general", "all"):
+            where_clauses.append({"part_id": target_part_id})
+
+        where_filter: Optional[Dict[str, Any]] = None
+        if len(where_clauses) == 1:
+            where_filter = where_clauses[0]
+        elif where_clauses:
+            where_filter = {"$and": where_clauses}
+
         if self.chroma_collection is not None:
             try:
-                where_filter = None
-                if system_layer and system_layer not in ("todos", "general", "all", "auto"):
-                    where_filter = {"system_layer": system_layer}
-
-                query_text = f"{target_part_id or ''} {query}".strip()
                 results = self.chroma_collection.query(
-                    query_texts=[query_text],
+                    query_texts=[query.strip()],
                     n_results=min(n_results, max(1, self.chroma_collection.count())),
                     where=where_filter,
                 )
@@ -262,34 +285,36 @@ class MedicalRAGEngine:
             except Exception as e:
                 logger.warning(f"Error consultando ChromaDB: {e}. Pasando a búsqueda en memoria.")
 
-        norm_query = normalize_text(f"{target_part_id or ''} {query}")
-        keywords = set(re.findall(r"\w+", norm_query))
+        target_norm = normalize_text(target_part_id) if target_part_id else ""
+        pool = (
+            [c for c in self.chunks if normalize_text(c.part_id) == target_norm]
+            if target_norm and target_norm not in ("general", "all")
+            else list(self.chunks)
+        ) or list(self.chunks)
+
+        layer_norm = normalize_text(system_layer) if system_layer else ""
+        keywords = {kw for kw in re.findall(r"\w+", normalize_text(query)) if len(kw) > 3}
         scored_chunks: List[tuple[float, MedicalDocumentChunk]] = []
 
-        for chunk in self.chunks:
+        for chunk in pool:
             score = 0.0
-            chunk_text = normalize_text(f"{chunk.title} {chunk.content} {chunk.part_id}")
+            title_norm = normalize_text(chunk.title)
+            content_norm = normalize_text(chunk.content)
 
-            if target_part_id and normalize_text(target_part_id) in normalize_text(chunk.part_id):
-                score += 35.0
-            if system_layer and normalize_text(system_layer) == normalize_text(chunk.system_layer):
+            if layer_norm in ("oseo", "muscular", "nervioso") and normalize_text(chunk.system_layer) == layer_norm:
                 score += 15.0
 
             for kw in keywords:
-                if len(kw) > 3:
-                    if kw in normalize_text(chunk.title):
-                        score += 10.0
-                    if kw in chunk_text:
-                        score += 2.0
+                if kw in title_norm:
+                    score += 10.0
+                if kw in content_norm:
+                    score += 2.0
 
             if score > 0:
                 scored_chunks.append((score, chunk))
 
         scored_chunks.sort(key=lambda x: x[0], reverse=True)
-        top = scored_chunks[:n_results]
-
-        if not top and self.chunks:
-            top = [(1.0, c) for c in self.chunks[:n_results]]
+        top = scored_chunks[:n_results] or [(1.0, c) for c in pool[:n_results]]
 
         return [
             {
@@ -308,98 +333,33 @@ class MedicalRAGEngine:
         topic_layer: str,
         contexts: List[Dict[str, Any]],
     ) -> Dict[str, Any]:
-        """Generador educativo de alta precisión para responder exactamente a la consulta formulada."""
-        q = normalize_text(query)
-        sources = list(dict.fromkeys([c["source_file"] for c in contexts]))
-        if not sources:
-            sources = ["conceptos_fundamentales.md", "sistema_oseo.md"]
-
-        # 1. ¿QUÉ ES EL HUESO?
-        if any(term in q for term in ["que es el hueso", "que son los huesos", "el hueso", "los huesos", "tejido oseo"]):
-            answer = (
-                "### 🦴 ¿Qué es el hueso?\n\n"
-                "**El hueso** es un órgano rígido, vivo y dinámico compuesto por **tejido conectivo mineralizado altamente vascularizado**. "
-                "En el cuerpo humano adulto, el esqueleto consta de **206 huesos constantes** organizados en esqueleto axial y apendicular.\n\n"
-                "#### 🔬 Composición Histológica y Celular:\n"
-                "- **Matriz Extracelular**: Consta de una fracción orgánica (~35%, principalmente colágeno tipo I y proteoglicanos que aportan flexibilidad y resistencia a la tracción) "
-                "y una fracción mineral inorgánica (~65%, cristales de hidroxiapatita cálcica $[Ca_{10}(PO_4)_6(OH)_2]$ que proporcionan dureza y resistencia a la compresión).\n"
-                "- **Osteoblastos**: Células formadoras de hueso que sintetizan el osteoide inicial y dirigen la mineralización.\n"
-                "- **Osteocitos**: Células maduras interconectadas por canalículos que detectan deformaciones mecánicas y regulan el remodelado óseo.\n"
-                "- **Osteoclastos**: Células multinucleadas que reabsorben la matriz ósea mineralizada para permitir el recambio celular.\n\n"
-                "#### 🏛️ Arquitectura Anatómica:\n"
-                "- **Corteza de Hueso Compacto**: Formada por osteonas y sistemas de Havers concéntricos resistentes a la flexión y torsión.\n"
-                "- **Hueso Esponjoso o Trabecular**: Red interna tridimensional que orienta sus trabéculas según las líneas de fuerza gravitatoria y aloja la médula ósea.\n"
-                "- **Periostio**: Membrana osteógena externa ricamente inervada por fibras sensitivas de dolor.\n"
-                "- **Médula Ósea**: Médula roja (hematopoyesis) y médula amarilla (adipocitos de reserva energética).\n\n"
-                "#### ⚡ Funciones Vitales:\n"
-                "1. **Soporte y Palancas**: Provee sostén biomecánico y puntos de anclaje para la acción muscular.\n"
-                "2. **Protección**: Resguarda estructuras nobles (encéfalo, corazón, pulmones, médula espinal).\n"
-                "3. **Almacén Mineral**: Aloja el **99% del calcio** y el **85% del fósforo** de todo el organismo.\n"
-                "4. **Hematopoyesis**: Producción ininterrumpida de glóbulos rojos, glóbulos blancos y plaquetas.\n\n"
-                "> ⚠️ **Recordatorio Educativo:** Información pedagógica; no sustituye la consulta médica especializada."
-            )
+        """Genera una respuesta puntual usando únicamente el fragmento relevante."""
+        if not contexts:
             return {
-                "answer": answer,
-                "sources": ["conceptos_fundamentales.md", "sistema_oseo.md"],
-                "related_structures": ["craneo", "femur_izq", "columna_vertebral", "humero_izq"],
+                "answer": f"No encontré información específica sobre **{topic_name}** en la base de conocimiento.",
+                "sources": [],
+                "related_structures": [],
             }
 
-        # 2. ¿QUÉ ES EL MÚSCULO?
-        if any(term in q for term in ["que es el musculo", "que son los musculos", "el musculo", "los musculos"]):
-            answer = (
-                "### 💪 ¿Qué es el músculo?\n\n"
-                "**El músculo** es un tejido biológico contráctil especializado que convierte energía química en energía mecánica. "
-                "El ser humano cuenta con más de **650 músculos esqueléticos** que representan entre el 40% y el 50% de la masa corporal.\n\n"
-                "#### 🧬 Clasificación Funcional:\n"
-                "- **Músculo Estriado Esquelético**: Voluntario, inervado por nervios somáticos y anclado a huesos por tendones.\n"
-                "- **Músculo Estriado Cardíaco**: Involuntario, conforma el miocardio y se contrae rítmicamente sin fatiga.\n"
-                "- **Músculo Liso**: Involuntario, situado en vísceras, vasos sanguíneos y esfínteres.\n\n"
-                "#### ⚙️ Mecanismo de Contracción:\n"
-                "El **sarcómero** es la unidad funcional elemental. El potencial de acción motor libera $Ca^{2+}$ en el sarcoplasma, "
-                "permitiendo que las cabezas de **miosina** interactúen con la **actina**, produciendo el deslizamiento de miofilamentos y acortamiento muscular."
-            )
-            return {
-                "answer": answer,
-                "sources": ["conceptos_fundamentales.md", "sistema_muscular.md"],
-                "related_structures": ["biceps_braquial_izq", "cuadriceps_izq", "deltoides_izq", "pectoral_mayor"],
-            }
+        primary = contexts[0]
+        body = re.sub(r"^###\s+.*\n", "", primary["content"], count=1).strip()
+        body = "\n".join(
+            line for line in body.splitlines()
+            if not re.match(r"^-\s+\*\*(ID Estructural|Capa Anatómica)\*\*:", line)
+        ).strip()
+        source = primary.get("source_file", "")
+        part_id = (primary.get("metadata") or {}).get("part_id", "general")
 
-        # 3. ¿QUÉ ES EL SISTEMA NERVIOSO / NEURONA?
-        if any(term in q for term in ["sistema nervioso", "que es una neurona", "la neurona", "el nervio"]):
-            answer = (
-                "### ⚡ ¿Qué es el Sistema Nervioso y la Neurona?\n\n"
-                "**El sistema nervioso** es el centro de control y comunicación electroquímica del cuerpo humano. "
-                "Se divide anatómicamente en **Sistema Nervioso Central (SNC)** (encéfalo y médula espinal) y "
-                "**Sistema Nervioso Periférico (SNP)** (nervios craneales y espinales).\n\n"
-                "#### 🧠 La Neurona:\n"
-                "- **Soma**: Cuerpo metabólico neuronal.\n"
-                "- **Dendritas**: Red receptora de señales aferentes.\n"
-                "- **Axón**: Vía de conducción eferente con vaina de mielina para transmisión por saltos.\n"
-                "- **Sinapsis**: Hendidura de comunicación neuroquímica intercelular."
-            )
-            return {
-                "answer": answer,
-                "sources": ["conceptos_fundamentales.md", "sistema_nervioso.md"],
-                "related_structures": ["cerebro_encefalo", "medula_espinal", "plexo_braquial", "nervio_ciatico"],
-            }
-
-        # 4. RESPUESTA CONTEXTUAL PRECISIVA
-        context_body = "\n".join([c["content"] for c in contexts[:2]])
         answer = (
-            f"### 🩺 Análisis Clínico Educativo: {topic_name}\n\n"
-            f"**Pregunta formulada:** *\"{query}\"*\n\n"
-            f"#### 🧬 Hallazgos Anatómicos y Biomecánicos:\n"
-            f"{context_body}\n\n"
-            f"#### 🔬 Relevancia Clínica:\n"
-            f"El conocimiento de **{topic_name}** es fundamental para la comprensión de las líneas de carga biomecánica, "
-            f"la prevención de distensiones, fracturas o el abordaje de neuropatías compresivas.\n\n"
-            f"> ⚠️ **Aviso:** Material educativo orientado a la formación médica."
+            f"### {topic_name}\n\n"
+            f"{body}\n\n"
+            f"> ⚠️ **Recordatorio educativo:** información pedagógica; no sustituye la consulta médica."
         )
 
         return {
             "answer": answer,
-            "sources": sources,
-            "related_structures": [c["metadata"].get("part_id", "general") for c in contexts if c["metadata"].get("part_id")][:4],
+            "sources": [source] if source else [],
+            "related_structures": [part_id] if part_id and part_id != "general" else [],
         }
 
     def consult(
@@ -432,19 +392,24 @@ class MedicalRAGEngine:
 
                 context_str = "\n\n".join([f"Fuente ({c['source_file']}):\n{c['content']}" for c in contexts])
                 system_prompt = (
-                    "Eres el Asistente Clínico y Docente de NeuroAnatomy 3D. "
-                    "Responde EXACTAMENTE a lo que el usuario pregunta. "
-                    "Si pregunta '¿qué es el hueso?', responde sobre la definición, histología y función del hueso, NO sobre otra estructura. "
-                    "Estructura tu respuesta con rigor pedagógico, emojis y viñetas claras. Termina con el disclaimer médico."
+                    "Responde SOLO sobre la estructura anatómica preguntada. "
+                    "Usa exclusivamente la información dentro de <contexto> y </contexto>. "
+                    "No menciones otras estructuras, no hagas comparaciones y no agregues temas no preguntados. "
+                    "Sé breve, directo y pedagógico. Termina con un aviso educativo breve."
                 )
-                user_prompt = f"Pregunta: {question}\nContexto Médico:\n{context_str}"
+                user_prompt = f"<pregunta>{question}</pregunta>\n<contexto>{context_str}</contexto>"
 
                 response = llm.invoke([SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)])
                 sources = list(dict.fromkeys([c["source_file"] for c in contexts]))
+                related = list(dict.fromkeys([
+                    c["metadata"].get("part_id", "general")
+                    for c in contexts
+                    if c["metadata"].get("part_id")
+                ]))
                 return {
                     "answer": response.content,
                     "sources": sources,
-                    "related_structures": [c["metadata"].get("part_id", "general") for c in contexts][:3],
+                    "related_structures": related[:3],
                 }
             except Exception as e:
                 logger.error(f"Error invocando Gemini API: {e}. Empleando fallback local.")
@@ -457,15 +422,23 @@ class MedicalRAGEngine:
                 llm = ChatOpenAI(model="gpt-4o-mini", api_key=self.openai_api_key, temperature=0.2)
                 context_str = "\n\n".join([f"Fuente ({c['source_file']}):\n{c['content']}" for c in contexts])
                 system_prompt = (
-                    "Eres el Asistente Clínico de NeuroAnatomy 3D. "
-                    "Responde EXACTAMENTE a la pregunta formulada por el usuario con rigor médico."
+                    "Responde SOLO sobre la estructura anatómica preguntada. "
+                    "Usa exclusivamente la información dentro de <contexto> y </contexto>. "
+                    "No menciones otras estructuras, no hagas comparaciones y no agregues temas no preguntados. "
+                    "Sé breve, directo y pedagógico. Termina con un aviso educativo breve."
                 )
-                response = llm.invoke([SystemMessage(content=system_prompt), HumanMessage(content=f"Pregunta: {question}\nContexto:\n{context_str}")])
+                user_prompt = f"<pregunta>{question}</pregunta>\n<contexto>{context_str}</contexto>"
+                response = llm.invoke([SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)])
                 sources = list(dict.fromkeys([c["source_file"] for c in contexts]))
+                related = list(dict.fromkeys([
+                    c["metadata"].get("part_id", "general")
+                    for c in contexts
+                    if c["metadata"].get("part_id")
+                ]))
                 return {
                     "answer": response.content,
                     "sources": sources,
-                    "related_structures": [c["metadata"].get("part_id", "general") for c in contexts][:3],
+                    "related_structures": related[:3],
                 }
             except Exception as e:
                 logger.error(f"Error invocando OpenAI API: {e}. Empleando fallback local.")

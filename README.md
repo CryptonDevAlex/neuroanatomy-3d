@@ -37,6 +37,7 @@
    - Detección precisa de partes anatómicas con ratón (`Raycasting`), efecto emisivo en hover y selección con zoom focal.
    - **Soporte Dual de Modelos**: Carga automática de modelos GLTF (`/assets/models/human_anatomy.glb`) con fallback inmediato a un maniquí anatómico articulado procedural con mallas agrupadas por capas.
    - Controles de visualización: filtrado por capas (**Esqueleto Óseo**, **Sistema Muscular**, **Sistema Nervioso**, **Todos**) y activación de modo **Wireframe**.
+   - La capa **Nervioso** usa el modelo realista de Z-Anatomy / BodyParts3D (CC BY-SA 4.0), con fallback a las capas originales.
 
 2. **Asistente Clínico Inteligente RAG (FastAPI + ChromaDB + LangChain)**:
    - Indexación semántica en tiempo real de corpus anatómicos y biomecánicos especializados.

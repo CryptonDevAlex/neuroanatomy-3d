@@ -2,13 +2,19 @@ import {
   Component,
   ElementRef,
   ViewChild,
+  computed,
   effect,
   inject,
   signal,
 } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
-import { AnatomyApiService, ChatMessage } from '../../services/anatomy-api.service';
+import {
+  AnatomyApiService,
+  EXAM_SOURCE,
+  ExamQuestion,
+  getExamsForPart,
+} from '../../services/anatomy-api.service';
 
 @Component({
   selector: 'app-clinical-chat',
@@ -16,84 +22,73 @@ import { AnatomyApiService, ChatMessage } from '../../services/anatomy-api.servi
   imports: [CommonModule, FormsModule],
   template: `
     <aside class="w-full h-full flex flex-col bg-studio-900 border-l border-slate-800 text-slate-100 select-text overflow-hidden">
-      <!-- Encabezado de la Ficha Anatómica Activa -->
-      <div class="p-4 border-b border-slate-800 bg-studio-850/70 backdrop-blur-md">
-        @if (anatomyService.selectedDetail(); as detail) {
-          <div class="space-y-2">
-            <div class="flex items-center justify-between">
-              <div class="flex items-center gap-2">
-                <span class="w-2.5 h-2.5 rounded-full" [ngClass]="getLayerDotClass(detail.system_layer)"></span>
-                <span class="text-[11px] font-mono uppercase tracking-widest text-slate-400">
-                  Sistema {{ detail.system_layer }}
-                </span>
-              </div>
-              <span class="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700">
-                {{ detail.classification }}
-              </span>
-            </div>
-
-            <div>
-              <h2 class="text-lg font-bold text-white tracking-tight flex items-center gap-2">
-                {{ detail.name }}
-              </h2>
-              <p class="text-xs italic text-cyan-400/90 font-serif">
-                {{ detail.latin_name }}
-              </p>
-            </div>
-
-            <!-- Ficha Técnica Resumida -->
-            <p class="text-xs text-slate-300 leading-relaxed line-clamp-3">
-              {{ detail.function }}
-            </p>
-
-            <!-- Patologías Frecuentes Chips -->
-            @if (detail.common_pathologies.length) {
-              <div class="pt-1">
-                <span class="text-[10px] text-slate-400 uppercase font-mono block mb-1">Patologías Asociadas:</span>
-                <div class="flex flex-wrap gap-1.5">
-                  @for (pat of detail.common_pathologies; track pat) {
-                    <button
-                      (click)="askQuickQuestion('¿Qué implicancia clínica tiene ' + pat + ' en ' + detail.name + '?')"
-                      class="text-[10px] px-2 py-0.5 rounded bg-red-950/40 border border-red-800/40 text-red-300 hover:bg-red-900/60 transition-all text-left"
-                    >
-                      ⚠️ {{ pat }}
-                    </button>
-                  }
-                </div>
-              </div>
-            }
-
-            <!-- Botones de Consulta Rápida -->
-            <div class="pt-2 border-t border-slate-800/80">
-              <span class="text-[10px] text-slate-400 uppercase font-mono block mb-1.5">Consultas Clínicas Rápidas:</span>
-              <div class="flex flex-wrap gap-1.5">
-                <button
-                  (click)="askQuickQuestion('¿Cuál es la biomecánica y función principal de ' + detail.name + '?')"
-                  class="text-[11px] px-2.5 py-1 rounded-lg bg-studio-800 border border-slate-700 hover:border-cyan-500/60 hover:text-cyan-300 transition-all flex items-center gap-1 text-slate-300"
-                >
-                  ⚡ Función & Biomecánica
-                </button>
-                <button
-                  (click)="askQuickQuestion('¿Qué lesiones frecuentes y mecanismos traumáticos afectan a ' + detail.name + '?')"
-                  class="text-[11px] px-2.5 py-1 rounded-lg bg-studio-800 border border-slate-700 hover:border-red-500/60 hover:text-red-300 transition-all flex items-center gap-1 text-slate-300"
-                >
-                  🩺 Lesiones Frecuentes
-                </button>
-                <button
-                  (click)="askQuickQuestion('¿Qué inervación, irrigación e inserciones anatómicas corresponden a ' + detail.name + '?')"
-                  class="text-[11px] px-2.5 py-1 rounded-lg bg-studio-800 border border-slate-700 hover:border-cyan-500/60 hover:text-cyan-300 transition-all flex items-center gap-1 text-slate-300"
-                >
-                  🧬 Inervación & Inserciones
-                </button>
-              </div>
-            </div>
+      <div class="p-3 border-b border-slate-800 bg-studio-850/70 backdrop-blur-md">
+        <div class="flex items-center justify-between gap-3">
+          <div class="min-w-0">
+            <p class="text-[9px] font-mono uppercase tracking-widest text-slate-500">Examen por estructura</p>
+            <p class="text-xs font-semibold text-slate-200 truncate">{{ examTitle() }}</p>
           </div>
-        } @else {
-          <!-- Estado Inicial sin Selección -->
-          <div class="text-center py-6 text-slate-400">
-            <div class="text-3xl mb-2">🦴</div>
-            <p class="text-sm font-medium text-slate-200">Selecciona una estructura en el visor 3D</p>
-            <p class="text-xs text-slate-500 mt-1">Haz clic sobre cualquier hueso, músculo o nervio para ver su ficha técnica.</p>
+          <button
+            (click)="toggleExam()"
+            class="shrink-0 px-3 py-1.5 rounded-lg border text-[11px] font-semibold transition-all"
+            [ngClass]="examOpen() ? 'border-amber-500/70 bg-amber-500/15 text-amber-300' : 'border-slate-700 bg-studio-800 text-slate-300 hover:border-amber-500/60 hover:text-amber-300'"
+          >
+            📝 Examen
+          </button>
+        </div>
+
+        @if (examOpen()) {
+          <div class="mt-3 rounded-xl border border-slate-700 bg-studio-900/80 p-3 space-y-2">
+            @if (examFinished()) {
+              <div class="text-center space-y-2 py-2">
+                <p class="text-3xl font-bold text-cyan-300">{{ examScore() }}/{{ examQuestions().length }}</p>
+                <p class="text-xs text-slate-400">Resultado del examen de {{ examTitle() }}</p>
+                <button
+                  (click)="restartExam()"
+                  class="px-3 py-1.5 rounded-lg bg-cyan-500/15 border border-cyan-500/50 text-cyan-300 text-[11px] font-semibold hover:bg-cyan-500/25"
+                >
+                  Repetir examen
+                </button>
+              </div>
+            } @else {
+              @if (currentQuestion(); as question) {
+              <div class="flex items-center justify-between text-[10px] font-mono text-slate-500">
+                <span>Pregunta {{ examIndex() + 1 }} / {{ examQuestions().length }}</span>
+                <span>{{ examScore() }} aciertos</span>
+              </div>
+              <p class="text-xs font-semibold text-slate-100 leading-relaxed">{{ question.question }}</p>
+              <div class="space-y-1.5">
+                @for (option of question.options; track $index) {
+                  <button
+                    (click)="answerExam($index)"
+                    [disabled]="examAnswers()[question.id] !== undefined"
+                    [ngClass]="getOptionClass($index, question)"
+                    class="w-full flex items-center gap-2 px-2.5 py-2 rounded-lg border text-[11px] transition-all disabled:cursor-default"
+                  >
+                    <span class="font-mono text-[10px] opacity-70">{{ letters[$index] }}</span>
+                    <span class="flex-1 text-left">{{ option }}</span>
+                    @if (examAnswers()[question.id] === $index) {
+                      <span>{{ $index === question.answer ? '✓' : '✕' }}</span>
+                    }
+                  </button>
+                }
+              </div>
+              @if (examAnswers()[question.id] !== undefined) {
+                <div class="rounded-lg bg-slate-950/60 border border-slate-800 p-2.5 space-y-2">
+                  <p class="text-[11px] text-slate-300 leading-relaxed">{{ question.explanation }}</p>
+                  <div class="flex justify-end">
+                    <button
+                      (click)="nextQuestion()"
+                      class="px-3 py-1 rounded-md bg-cyan-500/15 border border-cyan-500/40 text-cyan-300 text-[10px] font-semibold hover:bg-cyan-500/25"
+                    >
+                      {{ examIndex() + 1 >= examQuestions().length ? 'Ver resultado' : 'Siguiente →' }}
+                    </button>
+                  </div>
+                </div>
+              }
+              }
+            }
+            <p class="text-[9px] text-slate-600 leading-tight">{{ examSource }}</p>
           </div>
         }
       </div>
@@ -203,15 +198,38 @@ export class ClinicalChatComponent {
   @ViewChild('chatContainer') private chatContainer!: ElementRef<HTMLDivElement>;
 
   readonly anatomyService = inject(AnatomyApiService);
+  readonly examSource = EXAM_SOURCE;
+  readonly letters = ['A', 'B', 'C', 'D'];
   userInput = '';
 
+  readonly examOpen = signal(false);
+  readonly examIndex = signal(0);
+  readonly examAnswers = signal<Record<string, number>>({});
+  readonly examFinished = signal(false);
+  readonly examQuestions = computed(() => getExamsForPart(this.anatomyService.selectedPart()));
+  readonly currentQuestion = computed(() => this.examQuestions()[this.examIndex()] ?? null);
+  readonly examTitle = computed(() => (this.anatomyService.selectedPart() || 'Anatomía general').replace(/_/g, ' '));
+  readonly examScore = computed(() =>
+    this.examQuestions().reduce(
+      (score, question) => score + (this.examAnswers()[question.id] === question.answer ? 1 : 0),
+      0
+    )
+  );
+
+  private lastExamPart: string | null = null;
+
   constructor() {
-    // Auto-scroll al recibir mensajes
     effect(() => {
-      // Registrar dependencia reactiva
-      const history = this.anatomyService.chatHistory();
-      const loading = this.anatomyService.isLoading();
-      setTimeout(() => this.scrollToBottom(), 50);
+      this.anatomyService.chatHistory();
+      this.anatomyService.isLoading();
+      const part = this.anatomyService.selectedPart();
+      setTimeout(() => {
+        this.scrollToBottom();
+        if (part !== this.lastExamPart) {
+          this.lastExamPart = part;
+          this.resetExam();
+        }
+      }, 0);
     });
   }
 
@@ -224,17 +242,54 @@ export class ClinicalChatComponent {
     this.anatomyService.consultChat(query);
   }
 
-  askQuickQuestion(question: string): void {
-    this.anatomyService.consultChat(question);
+  toggleExam(): void {
+    if (this.examOpen()) {
+      this.examOpen.set(false);
+      return;
+    }
+    this.resetExam();
+    this.examOpen.set(true);
+  }
+
+  answerExam(index: number): void {
+    const question = this.currentQuestion();
+    if (!question || this.examAnswers()[question.id] !== undefined) return;
+    this.examAnswers.update((answers) => ({ ...answers, [question.id]: index }));
+  }
+
+  nextQuestion(): void {
+    if (this.examIndex() >= this.examQuestions().length - 1) {
+      this.examFinished.set(true);
+      return;
+    }
+    this.examIndex.update((index) => index + 1);
+  }
+
+  restartExam(): void {
+    this.resetExam();
+  }
+
+  getOptionClass(index: number, question: ExamQuestion): string {
+    const selected = this.examAnswers()[question.id];
+    if (selected === undefined) {
+      return 'border-slate-700 bg-studio-800 text-slate-300 hover:border-cyan-500/60 hover:text-cyan-300';
+    }
+    if (index === question.answer) {
+      return 'border-emerald-500/70 bg-emerald-950/30 text-emerald-200';
+    }
+    if (index === selected) {
+      return 'border-red-500/70 bg-red-950/30 text-red-200';
+    }
+    return 'border-slate-800 bg-slate-950/40 text-slate-500';
   }
 
   selectRelated(partId: string): void {
     this.anatomyService.selectPart(partId);
+    this.resetExam();
     this.anatomyService.consultChat(`Explícame la función y relación anatómica de ${partId}`);
   }
 
   formatMarkdown(content: string): string {
-    // Parser seguro y simple para resaltar títulos, negritas y alertas
     let html = content
       .replace(/^### (.*$)/gim, '<h4 class="font-bold text-cyan-300 text-sm mt-2 mb-1">$1</h4>')
       .replace(/^#### (.*$)/gim, '<h5 class="font-semibold text-slate-100 text-xs mt-1.5 mb-0.5">$1</h5>')
@@ -245,17 +300,10 @@ export class ClinicalChatComponent {
     return html;
   }
 
-  getLayerDotClass(layer: string): string {
-    switch (layer) {
-      case 'oseo':
-        return 'bg-slate-200';
-      case 'muscular':
-        return 'bg-red-500';
-      case 'nervioso':
-        return 'bg-cyan-400';
-      default:
-        return 'bg-slate-400';
-    }
+  private resetExam(): void {
+    this.examIndex.set(0);
+    this.examAnswers.set({});
+    this.examFinished.set(false);
   }
 
   private scrollToBottom(): void {

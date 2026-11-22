@@ -12,6 +12,7 @@ import { CommonModule } from '@angular/common';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
 import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
 import { AnatomyApiService } from '../../services/anatomy-api.service';
 
@@ -186,11 +187,15 @@ interface ClickedPin {
           <span class="w-2.5 h-2.5 rounded-full bg-red-500 shadow-[0_0_8px_#ef4444]"></span> 701 Músculos
         </span>
         <span class="flex items-center gap-1.5">
-          <span class="w-2.5 h-2.5 rounded-full bg-cyan-400 shadow-[0_0_8px_#38bdf8]"></span> 954 Nervios & Encéfalo
+          <span class="w-2.5 h-2.5 rounded-full bg-amber-300 shadow-[0_0_8px_#fcd34d]"></span> 583 Nervios & Sentidos
         </span>
         <span class="flex items-center gap-1.5">
           <span class="w-2.5 h-2.5 rounded-full bg-emerald-400 shadow-[0_0_8px_#34d399]"></span> 102 Órganos
         </span>
+      </div>
+
+      <div class="absolute bottom-4 right-4 z-20 bg-studio-900/90 backdrop-blur-md px-2.5 py-1.5 rounded-lg border border-slate-700/60 text-[10px] text-slate-400 shadow-xl">
+        Modelo nervioso: <span class="text-cyan-300">Z-Anatomy / BodyParts3D</span> · CC BY-SA 4.0
       </div>
 
       <!-- Spinner de Descompresión Meshopt y Carga HD -->
@@ -198,7 +203,7 @@ interface ClickedPin {
         <div class="absolute inset-0 z-40 bg-studio-900/85 backdrop-blur-sm flex flex-col items-center justify-center gap-3">
           <div class="w-12 h-12 border-4 border-cyan-500 border-t-transparent rounded-full animate-spin"></div>
           <span class="text-sm font-mono text-cyan-300">Descomprimiendo Atlas Anatómico Realista HD...</span>
-          <span class="text-[11px] text-slate-400 font-mono">Decodificando mallas con MeshoptDecoder</span>
+          <span class="text-[11px] text-slate-400 font-mono">Decodificando mallas con Meshopt + Draco</span>
         </div>
       }
     </div>
@@ -221,6 +226,7 @@ export class AnatomyViewerComponent implements OnInit, OnDestroy {
   private camera!: THREE.PerspectiveCamera;
   private renderer!: THREE.WebGLRenderer;
   private controls!: OrbitControls;
+  private dracoLoader: DRACOLoader | null = null;
   private raycaster = new THREE.Raycaster();
   private mouse = new THREE.Vector2(-1000, -1000);
   private animationFrameId: number | null = null;
@@ -273,6 +279,7 @@ export class AnatomyViewerComponent implements OnInit, OnDestroy {
       cancelAnimationFrame(this.animationFrameId);
     }
     window.removeEventListener('resize', this.onWindowResize);
+    this.dracoLoader?.dispose();
     this.renderer?.dispose();
   }
 
@@ -357,6 +364,11 @@ export class AnatomyViewerComponent implements OnInit, OnDestroy {
     const loader = new GLTFLoader();
     // VITAL: Configurar MeshoptDecoder para desempaquetar muscles.glb, nerves.glb, brain.glb y organs.glb
     loader.setMeshoptDecoder(MeshoptDecoder);
+
+    const dracoLoader = new DRACOLoader();
+    dracoLoader.setDecoderPath('assets/draco/');
+    this.dracoLoader = dracoLoader;
+    loader.setDRACOLoader(dracoLoader);
 
     const targetHeight = 3.6;
 
@@ -446,9 +458,45 @@ export class AnatomyViewerComponent implements OnInit, OnDestroy {
     );
   }
 
-  // 3. Cargar SISTEMA NERVIOSO Y ENCÉFALO REALES (nerves.glb + brain.glb)
+  // 3. Cargar SISTEMA NERVIOSO REALISTA (Z-Anatomy) con fallback a las capas originales
   private loadNervousLayer(loader: GLTFLoader): void {
-    // Nervios (747 estructuras)
+    loader.load(
+      'assets/models/nervous_z_anatomy.glb',
+      (gltf) => {
+        const nervous = gltf.scene;
+        nervous.scale.setScalar(this.masterScale);
+        nervous.position.copy(this.masterOffset);
+
+        const nerveMat = new THREE.MeshStandardMaterial({
+          color: 0xfde68a,
+          emissive: 0xca8a04,
+          emissiveIntensity: 0.35,
+          roughness: 0.45,
+          metalness: 0.08,
+        });
+
+        nervous.traverse((child) => {
+          if (child instanceof THREE.Mesh) {
+            child.castShadow = false;
+            child.receiveShadow = false;
+            child.material = nerveMat.clone();
+            const cleanName = this.formatNerveName(child.name);
+            this.registerMeshForRaycasting(child, child.name, cleanName, 'nervioso');
+          }
+        });
+
+        this.layerGroups.nervioso.add(nervous);
+        console.log('✓ nervous_z_anatomy.glb cargado con éxito');
+      },
+      undefined,
+      (err) => {
+        console.error('Error cargando nervous_z_anatomy.glb:', err);
+        this.loadLegacyNervousLayers(loader);
+      }
+    );
+  }
+
+  private loadLegacyNervousLayers(loader: GLTFLoader): void {
     loader.load(
       'assets/models/nerves.glb',
       (gltf) => {
@@ -459,7 +507,7 @@ export class AnatomyViewerComponent implements OnInit, OnDestroy {
         const nerveMat = new THREE.MeshStandardMaterial({
           color: 0x38bdf8,
           emissive: 0x0284c7,
-          emissiveIntensity: 0.95, // Emisión bioluminiscente de axones
+          emissiveIntensity: 0.95,
           roughness: 0.2,
           metalness: 0.3,
         });
@@ -479,7 +527,6 @@ export class AnatomyViewerComponent implements OnInit, OnDestroy {
       (err) => console.error('Error cargando nerves.glb:', err)
     );
 
-    // Encéfalo / Cerebro (207 estructuras reales de giros y surcos)
     loader.load(
       'assets/models/brain.glb',
       (gltf) => {
@@ -678,7 +725,7 @@ export class AnatomyViewerComponent implements OnInit, OnDestroy {
   askAiAboutPin(): void {
     const pin = this.activePin();
     if (pin) {
-      this.anatomyService.consultChat(`Explícame la función biomecánica, inervación y relevancia clínica de ${pin.name}`);
+      this.anatomyService.consultChat(`Explícame la función biomecánica, inervación y relevancia clínica de ${pin.name} (ID: ${pin.id})`);
     }
   }
 
