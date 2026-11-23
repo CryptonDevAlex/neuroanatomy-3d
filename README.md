@@ -159,14 +159,14 @@ npm start
 
 | View | Preview |
 |------|---------|
-| **3D Atlas — Full Body (All Layers)** | [INSERT_SCREENSHOT_FULL_HERE] |
-| **Skeletal Layer Isolation** | [INSERT_SCREENSHOT_SKELETAL_HERE] |
-| **Muscular Layer with Wireframe** | [INSERT_SCREENSHOT_MUSCULAR_HERE] |
-| **Nervous System (Z-Anatomy/BodyParts3D)** | [INSERT_SCREENSHOT_NERVOUS_HERE] |
-| **Raycast Selection + Focal Zoom** | [INSERT_SCREENSHOT_SELECTION_HERE] |
-| **Clinical RAG Chat — Anatomical Query** | [INSERT_SCREENSHOT_CHAT_HERE] |
-| **RAG Response with Citations** | [INSERT_SCREENSHOT_CITATIONS_HERE] |
-| **Mock / Gemini / OpenAI Provider Toggle** | [INSERT_SCREENSHOT_PROVIDERS_HERE] |
+| **3D Atlas — Full Body (All Layers)** | ![Preview coming soon](https://img.shields.io/badge/Preview-coming_soon-lightgrey?style=flat-square) |
+| **Skeletal Layer Isolation** | ![Preview coming soon](https://img.shields.io/badge/Preview-coming_soon-lightgrey?style=flat-square) |
+| **Muscular Layer with Wireframe** | ![Preview coming soon](https://img.shields.io/badge/Preview-coming_soon-lightgrey?style=flat-square) |
+| **Nervous System (Z-Anatomy/BodyParts3D)** | ![Preview coming soon](https://img.shields.io/badge/Preview-coming_soon-lightgrey?style=flat-square) |
+| **Raycast Selection + Focal Zoom** | ![Preview coming soon](https://img.shields.io/badge/Preview-coming_soon-lightgrey?style=flat-square) |
+| **Clinical RAG Chat — Anatomical Query** | ![Preview coming soon](https://img.shields.io/badge/Preview-coming_soon-lightgrey?style=flat-square) |
+| **RAG Response with Citations** | ![Preview coming soon](https://img.shields.io/badge/Preview-coming_soon-lightgrey?style=flat-square) |
+| **Mock / Gemini / OpenAI Provider Toggle** | ![Preview coming soon](https://img.shields.io/badge/Preview-coming_soon-lightgrey?style=flat-square) |
 
 ---
 
